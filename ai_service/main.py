@@ -13,7 +13,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.segmentation import IrisSegmenter
 from core.normalization import IrisNormalizer
-from core.feature_extractor import IrisFeatureExtractor
+from core.hybrid_extractor import HybridIrisFeatureExtractor
+
 from gemini_helper import GeminiSecurityAssistant
 
 app = FastAPI(title="Hệ thống Nhận diện Mống mắt & AI Security API", version="2.0")
@@ -21,7 +22,8 @@ app = FastAPI(title="Hệ thống Nhận diện Mống mắt & AI Security API",
 print("Đang khởi tạo các Module AI (OpenCV HD, MobileNetV2, Gemini)...")
 segmenter = IrisSegmenter()
 normalizer = IrisNormalizer()
-extractor = IrisFeatureExtractor()
+extractor = HybridIrisFeatureExtractor()
+
 ai_assistant = GeminiSecurityAssistant()
 
 DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iris_database.json")
@@ -64,16 +66,17 @@ async def enroll_iris(user_id: str = Form(...), file: UploadFile = File(...)):
             
         pupil_hd, iris_hd, crop_enhanced, orig_pupil, orig_iris = all_eyes[0]
         norm_img = normalizer.normalize(crop_enhanced, pupil_hd, iris_hd)
-        feature_vector = extractor.extract_features(norm_img)
+        features = extractor.extract_features(norm_img, include_gabor=True)
         
-        MOCK_DATABASE[user_id] = feature_vector
+        MOCK_DATABASE[user_id] = features  # Store dict with cnn/gabor/hybrid
+
         save_db(MOCK_DATABASE)
         
         return JSONResponse({
             "status": "success",
             "user_id": user_id,
             "message": f"Đăng ký mống mắt thành công cho {user_id}",
-            "embedding": feature_vector.tolist()
+            "embedding": features
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi đăng ký: {e}")
@@ -135,15 +138,21 @@ async def verify_iris(file: UploadFile = File(...)):
         norm_time = round((time.time() - t_norm) * 1000, 2)
         
         t_ext = time.time()
-        feature_vector = extractor.extract_features(norm_img)
+        features = extractor.extract_features(norm_img, include_gabor=True)
         ext_time = round((time.time() - t_ext) * 1000, 2)
         
-        # So khớp với cơ sở dữ liệu mống mắt
-        # Ngưỡng 0.72 chuẩn xác nhận diện mắt thật của nhân viên và chống người lạ
-        for uid, stored_vector in MOCK_DATABASE.items():
-            is_match, score = extractor.match(feature_vector, stored_vector, threshold=0.72)
+        # So khớp với cơ sở dữ liệu - Hybrid matching with weighted scores
+        for uid, stored_features in MOCK_DATABASE.items():
+            is_match, score, scores_dict = extractor.match(
+                features, stored_features, 
+                threshold=0.72, 
+                method='hybrid',
+                cnn_weight=0.65, 
+                gabor_weight=0.35
+            )
             if score > best_score:
                 best_score = score
+
                 
                 # Tạo ảnh trực quan hóa base64 phục vụ tracking chi tiết từng bước
                 import base64
@@ -164,12 +173,13 @@ async def verify_iris(file: UploadFile = File(...)):
                     "pupil": orig_pupil,
                     "iris": orig_iris,
                     "norm_size": f"{norm_img.shape[1]}x{norm_img.shape[0]}",
-                    "vector_len": len(feature_vector),
+                    "vector_len": len(features.get('hybrid', features.get('cnn', []))),
                     "norm_time": norm_time,
                     "ext_time": ext_time,
                     "crop_b64": crop_b64,
                     "hough_b64": hough_b64,
-                    "norm_b64": norm_b64
+                    "norm_b64": norm_b64,
+                    "scores": scores_dict  # Include detailed scores
                 }
             if is_match and best_match_id is None:
                 best_match_id = uid
@@ -207,7 +217,10 @@ async def verify_iris(file: UploadFile = File(...)):
         "matching": {
             "best_score": round(float(best_score), 4),
             "threshold": 0.72,
-            "time_ms": match_time
+            "time_ms": match_time,
+            "cnn_score": best_eye_meta.get("scores", {}).get("cnn_score", 0.0),
+            "gabor_score": best_eye_meta.get("scores", {}).get("gabor_score", 0.0),
+            "weighted_hybrid": best_eye_meta.get("scores", {}).get("weighted_hybrid", 0.0)
         },
         "liveness": {
             "reason": liveness_check.get('reason', 'Mắt người thật (Phản xạ giác mạc tự nhiên)'),

@@ -68,3 +68,4 @@ php -S 0.0.0.0:3000
 * **Backend Web**: PHP PDO thuần kết nối MySQL / MariaDB.
 * **AI Core Backend**: Python, FastAPI, Uvicorn, OpenCV (Haar, HoughCircles, CLAHE, FFT Moiré), NumPy, MobileNetV2, Google Generative AI (Gemini Liveness).
 * **Báo cáo & Giám định**: SheetJS (`xlsx.full.min.js`), `html2pdf.bundle.min.js`, `biometric_export.js` (xuất phiếu giám định chuẩn A4 kèm 4 tầng ảnh cắt lớp Canvas).
+
