@@ -106,41 +106,79 @@ class HybridIrisFeatureExtractor:
         
         return result
 
-    def match(self, features_1, features_2, threshold=0.70, method='hybrid',
+    def match(self, features_1, features_2, threshold=0.72, method='hybrid',
               cnn_weight=0.65, gabor_weight=0.35):
         """
-        So khớp với weighted hybrid scoring
+        So khớp thông minh tương thích ngược:
+        - Tự động nhận diện định dạng dict {'cnn', 'gabor', 'hybrid'} hoặc numpy array 1280-D thuần.
+        - Kháng lỗi lệch kích thước (shape mismatch).
+        - Kết hợp weighted hybrid nếu cả 2 mẫu đều có Gabor; tự động fallback sang CNN nếu mẫu CSDL chỉ có 1280-D.
         Returns: (is_matched: bool, similarity: float, scores: dict)
         """
-        # Xử lý input
+        # 1. Trích xuất vector CNN 1280-D từ input 1
         if isinstance(features_1, dict):
-            vec1 = features_1.get(method, features_1.get('cnn'))
+            cnn1 = features_1.get('cnn')
+            gabor1 = features_1.get('gabor')
         else:
-            vec1 = features_1
-        
+            arr1 = np.asarray(features_1, dtype=np.float32)
+            cnn1 = arr1[:1280] if len(arr1) >= 1280 else arr1
+            gabor1 = arr1[1280:] if len(arr1) > 1280 else None
+
+        # 2. Trích xuất vector CNN 1280-D từ input 2
         if isinstance(features_2, dict):
-            vec2 = features_2.get(method, features_2.get('cnn'))
+            cnn2 = features_2.get('cnn')
+            gabor2 = features_2.get('gabor')
         else:
-            vec2 = features_2
-        
-        # Cosine similarity
-        similarity = float(np.dot(vec1, vec2))
+            arr2 = np.asarray(features_2, dtype=np.float32)
+            cnn2 = arr2[:1280] if len(arr2) >= 1280 else arr2
+            gabor2 = arr2[1280:] if len(arr2) > 1280 else None
+
+        # 3. Tính Cosine similarity cho CNN (1280-D)
+        cnn_sim = 0.0
+        if cnn1 is not None and cnn2 is not None:
+            c1 = np.asarray(cnn1, dtype=np.float32).flatten()
+            c2 = np.asarray(cnn2, dtype=np.float32).flatten()
+            min_len = min(len(c1), len(c2))
+            if min_len > 0:
+                c1 = c1[:min_len]
+                c2 = c2[:min_len]
+                norm1 = np.linalg.norm(c1)
+                norm2 = np.linalg.norm(c2)
+                if norm1 > 0 and norm2 > 0:
+                    cnn_sim = float(np.dot(c1, c2) / (norm1 * norm2))
+
+        # 4. Tính Cosine similarity cho Gabor nếu cả 2 đều có
+        gabor_sim = 0.0
+        has_gabor = (gabor1 is not None and gabor2 is not None and len(gabor1) > 0 and len(gabor2) > 0)
+        if has_gabor:
+            g1 = np.asarray(gabor1, dtype=np.float32).flatten()
+            g2 = np.asarray(gabor2, dtype=np.float32).flatten()
+            min_g_len = min(len(g1), len(g2))
+            if min_g_len > 0:
+                g1 = g1[:min_g_len]
+                g2 = g2[:min_g_len]
+                norm_g1 = np.linalg.norm(g1)
+                norm_g2 = np.linalg.norm(g2)
+                if norm_g1 > 0 and norm_g2 > 0:
+                    gabor_sim = float(np.dot(g1, g2) / (norm_g1 * norm_g2))
+
+        # 5. Kết hợp Hybrid nếu có cả hai, hoặc dùng CNN
+        if has_gabor and method == 'hybrid':
+            similarity = float(cnn_weight * cnn_sim + gabor_weight * gabor_sim)
+            used_method = 'hybrid'
+        else:
+            similarity = float(cnn_sim)
+            used_method = 'cnn'
+
+        similarity = max(0.0, min(1.0, similarity))
         is_matched = bool(similarity >= threshold)
-        
-        scores = {'method': method, 'score': similarity}
-        
-        # Tính riêng từng phương pháp nếu có
-        if isinstance(features_1, dict) and isinstance(features_2, dict):
-            if 'cnn' in features_1 and 'cnn' in features_2:
-                cnn_sim = float(np.dot(features_1['cnn'], features_2['cnn']))
-                scores['cnn_score'] = cnn_sim
-            
-            if 'gabor' in features_1 and 'gabor' in features_2:
-                gabor_sim = float(np.dot(features_1['gabor'], features_2['gabor']))
-                scores['gabor_score'] = gabor_sim
-            
-            # Weighted hybrid
-            if 'cnn_score' in scores and 'gabor_score' in scores:
-                scores['weighted_hybrid'] = cnn_weight * scores['cnn_score'] + gabor_weight * scores['gabor_score']
-        
+
+        scores = {
+            'method': used_method,
+            'score': similarity,
+            'cnn_score': cnn_sim,
+            'gabor_score': gabor_sim,
+            'weighted_hybrid': similarity
+        }
+
         return is_matched, similarity, scores

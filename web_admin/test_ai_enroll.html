@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Test AI Enroll - Debug</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #f5f5f5; }
+        .test { background: white; padding: 20px; margin: 10px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        button { padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #45a049; }
+        .result { margin-top: 10px; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 13px; white-space: pre-wrap; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        video { width: 320px; border-radius: 8px; background: #000; display: block; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>🔬 AI Enroll Multi - Debug Tool</h1>
+    <p>Server: <code>http://127.0.0.1:8000</code></p>
+
+    <div class="test">
+        <h3>Test 1: Health Check</h3>
+        <button onclick="testHealth()">Run</button>
+        <div class="result" id="r1" style="display:none;"></div>
+    </div>
+
+    <div class="test">
+        <h3>Test 2: POST Simple (no file)</h3>
+        <button onclick="testPost()">Run</button>
+        <div class="result" id="r2" style="display:none;"></div>
+    </div>
+
+    <div class="test">
+        <h3>Test 3: POST with Fake Image</h3>
+        <button onclick="testPostFile()">Run</button>
+        <div class="result" id="r3" style="display:none;"></div>
+    </div>
+
+    <div class="test">
+        <h3>Test 4: Real Camera Capture</h3>
+        <button onclick="testCamera()">Start Camera</button>
+        <video id="video" autoplay playsinline style="display:none;"></video>
+        <canvas id="canvas" style="display:none;"></canvas>
+        <div class="result" id="r4" style="display:none;"></div>
+    </div>
+
+    <script>
+        const AI = 'http://127.0.0.1:8000';
+        function log(id, msg, ok) {
+            const el = document.getElementById('r' + id);
+            el.style.display = 'block';
+            el.className = 'result ' + (ok ? 'success' : 'error');
+            el.textContent = msg;
+        }
+        async function testHealth() {
+            try {
+                const r = await fetch(AI + '/health');
+                const d = await r.json();
+                log(1, 'OK: ' + r.status + '\n' + JSON.stringify(d, null, 2), true);
+            } catch (e) {
+                log(1, 'FAIL: ' + e.message, false);
+            }
+        }
+        async function testPost() {
+            try {
+                const fd = new FormData();
+                fd.append('emp_id', '999');
+                fd.append('template_index', '1');
+                const r = await fetch(AI + '/api/enroll_multi', { method: 'POST', body: fd });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const d = await r.json();
+                log(2, 'OK: ' + r.status + '\nQuality: ' + d.quality_score, true);
+            } catch (e) {
+                log(2, 'FAIL: ' + e.message + '\n\n404 = endpoint not found', false);
+            }
+        }
+        async function testPostFile() {
+            try {
+                const c = document.createElement('canvas');
+                c.width = c.height = 1;
+                const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.8));
+                const fd = new FormData();
+                fd.append('file', blob, 'test.jpg');
+                fd.append('emp_id', '999');
+                fd.append('template_index', '2');
+                const r = await fetch(AI + '/api/enroll_multi', { method: 'POST', body: fd });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const d = await r.json();
+                log(3, 'OK: ' + r.status + '\nQuality: ' + d.quality_score + '\nVectors: ' + d.cnn_vector.length, true);
+            } catch (e) {
+                log(3, 'FAIL: ' + e.message, false);
+            }
+        }
+        async function testCamera() {
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('canvas');
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                video.srcObject = stream;
+                video.style.display = 'block';
+                log(4, 'Camera OK! Wait 2s...', true);
+                setTimeout(async () => {
+                    canvas.width = video.videoWidth || 640;
+                    canvas.height = video.videoHeight || 480;
+                    canvas.getContext('2d').drawImage(video, 0, 0);
+                    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.8));
+                    const fd = new FormData();
+                    fd.append('file', blob, 'capture.jpg');
+                    fd.append('emp_id', '777');
+                    fd.append('template_index', '1');
+                    const r = await fetch(AI + '/api/enroll_multi', { method: 'POST', body: fd });
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    const d = await r.json();
+                    log(4, 'OK!\nQuality: ' + d.quality_score + '\nStatus: ' + d.status, true);
+                    stream.getTracks().forEach(t => t.stop());
+                    video.style.display = 'none';
+                }, 2000);
+            } catch (e) {
+                log(4, 'FAIL: ' + e.message, false);
+            }
+        }
+    </script>
+</body>
+</html>

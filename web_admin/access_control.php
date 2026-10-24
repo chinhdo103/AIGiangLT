@@ -1,5 +1,9 @@
+<?php
+require_once 'includes/header.php';
+require_once 'auth_guard.php';
+?>
 <!-- Real-time Access Control Dashboard -->
-<div class="container-fluid">
+<div class="container-fluid mt-4">
     <div class="row mb-4">
         <div class="col">
             <h3>Kiểm Soát Truy Cập Thời Gian Thực</h3>
@@ -158,3 +162,4 @@ new Chart(document.getElementById('score-breakdown'), {
     background-color: rgba(56, 189, 248, 0.1);
 }
 </style>
+<?php require_once 'includes/footer.php'; ?>

@@ -1,7 +1,9 @@
+<?php
+require_once 'includes/header.php';
+require_once 'auth_guard.php';
+?>
 <!-- Live Monitor Dashboard -->
-<?php require_once 'config.php'; ?>
-
-<div class="container-fluid">
+<div class="container-fluid mt-4">
     <div class="row mb-4">
         <div class="col">
             <h3>Giám Sát Thời Gian Thực</h3>
@@ -159,3 +161,4 @@ async function pollLogs() {
 setInterval(pollLogs, 3000);
 pollLogs();
 </script>
+<?php require_once 'includes/footer.php'; ?>
