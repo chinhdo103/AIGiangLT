@@ -661,12 +661,14 @@ include __DIR__ . '/includes/sidebar.php';
                                         </div>
                                         <div class="text-end">
                                             <span class="badge ${isGranted ? 'bg-success' : 'bg-danger'} px-3 py-2">
-                                                ID: EMP${currentLogMeta.logId ? currentLogMeta.name.replace(/[^0-9]/g, '') || '8' : '8'}
+                                                ${isGranted ? `ID: EMP${currentLogMeta.logId ? currentLogMeta.name.replace(/[^0-9]/g, '') || '8' : '8'}` : 'TRUY CẬP BỊ TỪ CHỐI'}
                                             </span>
                                         </div>
                                     </div>
                                     <div class="text-muted small mt-2">
-                                        Định danh nhân sự xác thực thành công: <strong>${currentLogMeta.name}</strong>. Cửa đã mở và kích hoạt tín hiệu rơ-le tiếp điểm.
+                                        ${isGranted 
+                                            ? `Định danh nhân sự xác thực thành công: <strong>${currentLogMeta.name}</strong>. Cửa đã mở và kích hoạt tín hiệu rơ-le tiếp điểm.` 
+                                            : `Độ tương đồng đo được (${(match.best_score * 100).toFixed(1)}%) chưa đạt ngưỡng tiêu chuẩn sinh trắc (≥ ${(match.threshold ? match.threshold*100 : 72.0).toFixed(1)}%). Hệ thống duy trì khóa cửa an toàn.`}
                                     </div>
                                 </div>
                             </div>
@@ -777,6 +779,23 @@ include __DIR__ . '/includes/sidebar.php';
         const ctx = c.getContext('2d');
         const w = c.width, h = c.height;
 
+        // Nếu có ảnh cắt lớp thực tế từ AI Engine
+        if (p.segmentation && p.segmentation.crop_img) {
+            const img = new Image();
+            img.onload = () => {
+                ctx.clearRect(0, 0, w, h);
+                ctx.drawImage(img, 0, 0, w, h);
+                ctx.strokeStyle = '#06b6d4';
+                ctx.lineWidth = 2.5;
+                ctx.strokeRect(6, 6, w - 12, h - 12);
+                ctx.fillStyle = '#06b6d4';
+                ctx.font = 'bold 10px monospace';
+                ctx.fillText('ẢNH CẮT LỚP THỰC TẾ (REAL EYE ROI)', 12, 20);
+            };
+            img.src = p.segmentation.crop_img;
+            return;
+        }
+
         ctx.fillStyle = '#1e293b';
         ctx.fillRect(0, 0, w, h);
 
@@ -814,6 +833,22 @@ include __DIR__ . '/includes/sidebar.php';
         if (!c) return;
         const ctx = c.getContext('2d');
         const w = c.width, h = c.height;
+
+        // Nếu có ảnh Hough thực tế từ AI Engine
+        if (p.segmentation && p.segmentation.hough_img) {
+            const img = new Image();
+            img.onload = () => {
+                ctx.clearRect(0, 0, w, h);
+                ctx.drawImage(img, 0, 0, w, h);
+                ctx.fillStyle = '#10b981';
+                ctx.font = 'bold 10px monospace';
+                ctx.fillText(`PUPIL r=${p.segmentation.pupil[2]}px (TÂM: ${p.segmentation.pupil[0]}, ${p.segmentation.pupil[1]})`, 10, 18);
+                ctx.fillStyle = '#06b6d4';
+                ctx.fillText(`IRIS r=${p.segmentation.iris[2]}px (TÂM: ${p.segmentation.iris[0]}, ${p.segmentation.iris[1]})`, 10, 34);
+            };
+            img.src = p.segmentation.hough_img;
+            return;
+        }
 
         ctx.fillStyle = '#0f172a';
         ctx.fillRect(0, 0, w, h);
@@ -886,6 +921,25 @@ include __DIR__ . '/includes/sidebar.php';
         if (!c) return;
         const ctx = c.getContext('2d');
         const w = c.width, h = c.height;
+
+        // Nếu có dải chuẩn hóa Daugman thật từ AI Engine
+        if (p.normalization && p.normalization.strip_img) {
+            const img = new Image();
+            img.onload = () => {
+                ctx.clearRect(0, 0, w, h);
+                ctx.drawImage(img, 0, 0, w, h);
+                ctx.strokeStyle = 'rgba(6, 182, 212, 0.4)';
+                ctx.lineWidth = 1;
+                for (let x = 0; x <= w; x += w / 8) {
+                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+                }
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 10px monospace';
+                ctx.fillText('DẢI CHUẨN HÓA DAUGMAN THỰC TẾ (512 x 64 PX)', 10, 16);
+            };
+            img.src = p.normalization.strip_img;
+            return;
+        }
 
         ctx.fillStyle = '#0f172a';
         ctx.fillRect(0, 0, w, h);
@@ -969,10 +1023,24 @@ include __DIR__ . '/includes/sidebar.php';
         const cDB   = document.getElementById('stepCanvasDB');
         if (!cScan || !cDB) return;
 
-        // Vẽ dải 1 (Scan hiện tại)
-        drawStripPattern(cScan, 115, '#06b6d4', 'QUÉT HIỆN TẠI');
+        // Vẽ dải 1 (Scan thực tế của phiên quét này)
+        if (p.normalization && p.normalization.strip_img) {
+            const imgScan = new Image();
+            imgScan.onload = () => {
+                const ctx = cScan.getContext('2d');
+                ctx.clearRect(0, 0, cScan.width, cScan.height);
+                ctx.drawImage(imgScan, 0, 0, cScan.width, cScan.height);
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 8px monospace';
+                ctx.fillText(`1. DẢI CẮT LỚP PHIÊN QUÉT NÀY (#${currentLogMeta.logId})`, 8, 12);
+            };
+            imgScan.src = p.normalization.strip_img;
+        } else {
+            drawStripPattern(cScan, 115, '#06b6d4', `1. DẢI CẮT LỚP PHIÊN QUÉT NÀY (#${currentLogMeta.logId})`);
+        }
+
         // Vẽ dải 2 (Mẫu lưu CSDL)
-        drawStripPattern(cDB, 112, '#10b981', 'MẪU CSDL EMP8');
+        drawStripPattern(cDB, 112, '#10b981', `2. MỐNG MẮT MẪU TRONG CSDL (${currentLogMeta.name})`);
     }
 
     function drawStripPattern(canvas, seedOffset, accentColor, title) {

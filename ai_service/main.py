@@ -253,7 +253,7 @@ async def verify_iris(file: UploadFile = File(...)):
     if image is None:
         return JSONResponse({"match": False, "confidence": 0.0, "message": "File ảnh hỏng hoặc không đúng định dạng", "door_status": "LOCKED"})
         
-    # LỚP 1: LIVENESS CHECK (QUANG HỌC GIÁC MẠC 3D & CHỐNG MOIRE)
+    # LỚP 1: LIVENESS & ANTI-SPOOFING CHECK (QUANG HỌC GIÁC MẠC 3D, MOIRÉ FFT & CHỐNG ẢNH CHỤP)
     t_live = time.time()
     liveness_check = ai_assistant.check_eye_liveness_and_quality(image)
     liveness_time = round((time.time() - t_live) * 1000, 2)
@@ -262,10 +262,18 @@ async def verify_iris(file: UploadFile = File(...)):
         return JSONResponse({
             "match": False, 
             "confidence": 0.0, 
-            "message": f"[AI CẢNH BÁO]: {liveness_check.get('reason', 'Nghi ngờ giả mạo')}", 
+            "message": liveness_check.get('reason', 'Nghi ngờ giả mạo'), 
+            "spoof_detected": True,
+            "spoof_type": liveness_check.get('spoof_type', 'UNKNOWN'),
             "door_status": "LOCKED",
             "pipeline_details": {
-                "liveness": {"time_ms": liveness_time, "reason": liveness_check.get('reason')}
+                "resolution": f"{image.shape[1]}x{image.shape[0]}",
+                "liveness": {
+                    "time_ms": liveness_time, 
+                    "reason": liveness_check.get('reason'),
+                    "is_valid": False,
+                    "spoof_type": liveness_check.get('spoof_type')
+                }
             }
         })
         
@@ -282,7 +290,7 @@ async def verify_iris(file: UploadFile = File(...)):
             "door_status": "LOCKED"
         })
         
-    best_match_id = None
+    best_candidate_id = None
     best_score = 0.0
     best_eye_meta = None
     
@@ -310,6 +318,8 @@ async def verify_iris(file: UploadFile = File(...)):
             )
             if score > best_score:
                 best_score = score
+                if is_match or score >= 0.72:
+                    best_candidate_id = uid
                 
                 import base64
                 _, crop_buf = cv2.imencode('.jpg', crop_enhanced, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -337,8 +347,6 @@ async def verify_iris(file: UploadFile = File(...)):
                     "norm_b64": norm_b64,
                     "scores": scores_dict
                 }
-            if is_match and best_match_id is None:
-                best_match_id = uid
 
     match_time = round((time.time() - t_match_start) * 1000, 2)
     
@@ -351,6 +359,8 @@ async def verify_iris(file: UploadFile = File(...)):
             "norm_time": 10.0,
             "ext_time": 30.0
         }
+
+    best_match_id = best_candidate_id if best_score >= 0.72 else None
 
     pipeline_data = {
         "resolution": f"{image.shape[1]}x{image.shape[0]}",
@@ -380,12 +390,15 @@ async def verify_iris(file: UploadFile = File(...)):
         },
         "liveness": {
             "reason": liveness_check.get('reason', 'Mắt người thật (Phản xạ giác mạc tự nhiên)'),
-            "time_ms": liveness_time
+            "time_ms": liveness_time,
+            "is_valid": True,
+            "spoof_type": liveness_check.get('spoof_type', 'GENUINE')
         }
     }
     
+    display_confidence = round(min(99.8, best_score * 100), 1)
+    
     if best_match_id:
-        display_confidence = round(min(99.8, max(85.0, best_score * 100)), 1)
         return JSONResponse({
             "match": True,
             "user_id": best_match_id,
@@ -395,13 +408,12 @@ async def verify_iris(file: UploadFile = File(...)):
             "pipeline_details": pipeline_data
         })
     else:
-        display_confidence = round(max(0.0, best_score * 100), 1)
         return JSONResponse({
             "match": False,
             "user_id": None,
             "confidence": display_confidence,
             "door_status": "LOCKED",
-            "message": f"Từ chối truy cập. Độ khớp cao nhất {display_confidence}% (yêu cầu ≥ 72.0%).",
+            "message": f"Từ chối truy cập: Mống mắt không khớp (Độ khớp đạt {display_confidence}%, yêu cầu ≥ 72.0%).",
             "pipeline_details": pipeline_data
         })
 

@@ -55,17 +55,21 @@ try {
     $confidence = floatval($result['confidence'] ?? 0.0);
     $ai_message = $result['message'] ?? '';
     $pipeline_details = $result['pipeline_details'] ?? null;
+    $is_spoof = !empty($result['spoof_detected']) || (strpos($ai_message, 'CẢNH BÁO') !== false) || (strpos($ai_message, 'GIẢ MẠO') !== false);
 
     if (!$is_match || empty($raw_user_id)) {
-        // Ghi log từ chối đăng nhập
+        // Ghi log từ chối đăng nhập hoặc phát hiện giả mạo
+        $log_action = $is_spoof ? 'SPOOFING_ATTEMPT' : 'ENTRY_DENIED';
         try {
-            $stmt = $pdo->prepare("INSERT INTO access_logs (emp_id, lab_id, action, confidence_score, ai_reason, pipeline_details) VALUES (NULL, 1, 'ENTRY_DENIED', ?, ?, ?)");
-            $stmt->execute([$confidence, "ĐĂNG NHẬP THẤT BẠI: " . $ai_message, $pipeline_details ? json_encode($pipeline_details) : null]);
+            $stmt = $pdo->prepare("INSERT INTO access_logs (emp_id, lab_id, action, confidence_score, ai_reason, pipeline_details) VALUES (NULL, 1, ?, ?, ?, ?)");
+            $stmt->execute([$log_action, $confidence, ($is_spoof ? "[CẢNH BÁO GIẢ MẠO]: " : "ĐĂNG NHẬP THẤT BẠI: ") . $ai_message, $pipeline_details ? json_encode($pipeline_details) : null]);
         } catch (Exception $e) {}
 
         echo json_encode([
             'status' => 'error',
-            'message' => "Nhận diện thất bại! " . ($ai_message ?: "Mống mắt không khớp với bất kỳ hồ sơ nào trong hệ thống."),
+            'spoof_detected' => $is_spoof,
+            'spoof_type' => $result['spoof_type'] ?? null,
+            'message' => $ai_message ?: "Mống mắt không khớp với bất kỳ hồ sơ nào trong hệ thống.",
             'confidence' => $confidence
         ]);
         exit;

@@ -45,18 +45,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['eye_image'])) {
     $door_status = $result['door_status'] ?? 'LOCKED';
     $message = $result['message'] ?? '';
     $confidence = $result['confidence'] ?? 0.0;
+    $is_spoof = !empty($result['spoof_detected']) || (strpos($message, 'CẢNH BÁO') !== false) || (strpos($message, 'GIẢ MẠO') !== false);
     
     // 4. Quyết định hành vi logic & phân loại log dựa trên AI phán xét
     $action = 'ENTRY_DENIED';
     if ($is_match && $door_status === 'UNLOCKED') {
         $action = 'ENTRY_GRANTED';
-    } elseif (strpos($message, 'CẢNH BÁO') !== false || strpos($message, 'SPOOFING') !== false) {
+    } elseif ($is_spoof) {
         $action = 'SPOOFING_ATTEMPT'; // Phát hiện có dấu hiệu cố tình qua mặt hệ thống
     }
     
     // 5. Ghi nhận hành vi vào CSDL Nhật ký để Gemini Audit
     $stmt = $pdo->prepare("INSERT INTO access_logs (emp_id, lab_id, action, confidence_score, ai_reason, pipeline_details) VALUES (?, ?, ?, ?, ?, ?)");
-    // Chuyển đổi định danh user_id (Vd: EMP12) lấy về từ Python sang dạng số nguyên emp_id
     $emp_id = !empty($result['user_id']) ? intval(str_replace('EMP', '', $result['user_id'])) : null;
     $pipeline_json = isset($result['pipeline_details']) ? json_encode($result['pipeline_details']) : null;
     $stmt->execute([$emp_id, $lab_id, $action, $confidence, $message, $pipeline_json]);
@@ -66,7 +66,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['eye_image'])) {
         "status" => "success",
         "door" => $door_status,
         "ai_message" => $message,
-        "confidence" => $confidence
+        "confidence" => $confidence,
+        "spoof_detected" => $is_spoof,
+        "spoof_type" => $result['spoof_type'] ?? null
     ]);
 
 } else {

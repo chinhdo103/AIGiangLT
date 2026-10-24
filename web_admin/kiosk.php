@@ -235,6 +235,9 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
         </div>
     </main>
 
+<script src="assets/js/three.min.js"></script>
+<script src="assets/js/iris_three_hud.js"></script>
+
 <script>
     const video = document.getElementById('kioskVideo');
     const overlayCanvas = document.getElementById('kioskOverlayCanvas');
@@ -256,6 +259,15 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
     let audioCtx = null;
     let trackerTask = null;
     let lastScanTime = 0;
+
+    // Khởi tạo Three.js Biometric Hologram HUD
+    let kioskHUD = null;
+    window.addEventListener('DOMContentLoaded', () => {
+        const frameBox = document.querySelector('.scanner-frame');
+        if (frameBox && typeof IrisThreeHUD !== 'undefined') {
+            kioskHUD = new IrisThreeHUD(frameBox, { soundEnabled: true });
+        }
+    });
 
     function playBeep(type) {
         try {
@@ -471,12 +483,25 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                                 overlayCtx.fillText(label, tagX + 8, tagY + 14);
                             });
 
+                            // Cập nhật mục tiêu cho Three.js 3D Hologram HUD
+                            if (kioskHUD && validEyes.length > 0) {
+                                const primary = validEyes[0];
+                                const dispX = cw - (primary.x + primary.width);
+                                const cx = dispX + primary.width / 2;
+                                const cy = primary.y + primary.height / 2;
+                                kioskHUD.setTarget(cx, cy, primary.width / 2, true);
+                            }
+
                             const now = Date.now();
                             if (btnToggle.getAttribute('data-active') === 'true' && !isScanning && (now - lastScanTime > 3200)) {
                                 lastScanTime = now;
                                 performScan();
                             }
+                        } else {
+                            if (kioskHUD) kioskHUD.setTarget(0, 0, 45, false);
                         }
+                    } else {
+                        if (kioskHUD) kioskHUD.setTarget(0, 0, 45, false);
                     }
                 });
 
@@ -490,7 +515,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
         if (isScanning) return;
         isScanning = true;
 
-        statusPill.innerHTML = '<i class="fas fa-spinner fa-spin text-primary me-1"></i> AI đang bóc tách mống mắt...';
+        statusPill.innerHTML = '<i class="fas fa-spinner fa-spin text-primary me-1"></i> Three.js AI đang quét sinh trắc học...';
 
         canvas.width = video.videoWidth || 640;
         canvas.height = video.videoHeight || 480;
@@ -511,6 +536,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
             const data = await resp.json();
 
             if (data.status === 'success' && data.door === 'UNLOCKED') {
+                if (kioskHUD) kioskHUD.setState('SUCCESS');
                 playBeep('success');
                 doorBanner.className = 'door-status-banner door-status-unlocked';
                 doorIcon.className = 'fas fa-door-open fs-2 text-success';
@@ -531,21 +557,33 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                 }, 8000);
 
             } else {
-                playBeep('error');
-                doorBanner.className = 'door-status-banner door-status-locked';
-                doorIcon.className = 'fas fa-shield-virus fs-3 text-danger';
-                doorTitle.innerText = `TỪ CHỐI TRUY CẬP!`;
-                doorSub.innerText = data.ai_message || 'Mống mắt không khớp';
-                statusPill.innerHTML = `<i class="fas fa-circle-xmark text-danger me-1"></i> ${data.ai_message || 'Không khớp'}`;
+                if (data.spoof_detected) {
+                    if (kioskHUD) kioskHUD.setState('SPOOF');
+                    playBeep('error');
+                    doorBanner.className = 'door-status-banner door-status-locked border-danger bg-danger bg-opacity-10';
+                    doorIcon.className = 'fas fa-shield-virus fs-2 text-danger';
+                    doorTitle.innerText = `CẢNH BÁO: PHÁT HIỆN GIẢ MẠO!`;
+                    doorSub.innerText = data.ai_message;
+                    statusPill.innerHTML = `<i class="fas fa-triangle-exclamation text-danger me-1"></i> ${data.ai_message}`;
+                } else {
+                    if (kioskHUD) kioskHUD.setState('IDLE');
+                    playBeep('error');
+                    doorBanner.className = 'door-status-banner door-status-locked';
+                    doorIcon.className = 'fas fa-shield-virus fs-3 text-danger';
+                    doorTitle.innerText = `TỪ CHỐI TRUY CẬP!`;
+                    doorSub.innerText = data.ai_message || 'Mống mắt không khớp';
+                    statusPill.innerHTML = `<i class="fas fa-circle-xmark text-danger me-1"></i> ${data.ai_message || 'Không khớp'}`;
+                }
 
                 setTimeout(() => {
                     if (!isScanning) {
                         statusPill.innerHTML = '<i class="fas fa-eye text-primary me-1"></i> Hãy nhìn tự nhiên vào camera...';
                     }
-                }, 2000);
+                }, 2500);
             }
 
         } catch (err) {
+            if (kioskHUD) kioskHUD.setState('IDLE');
             console.error(err);
             statusPill.innerHTML = '<i class="fas fa-triangle-exclamation text-danger me-1"></i> Lỗi kết nối máy chủ AI';
         } finally {

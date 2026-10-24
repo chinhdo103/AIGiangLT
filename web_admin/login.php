@@ -341,6 +341,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="assets/js/three.min.js"></script>
+<script src="assets/js/iris_three_hud.js"></script>
 
 <script>
     const video = document.getElementById('webcam');
@@ -358,6 +360,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     let autoScanInterval = null;
     let trackerTask = null;
     let lastScanTime = 0;
+
+    // Khởi tạo Three.js Biometric Hologram HUD
+    let irisHUD = null;
+    window.addEventListener('DOMContentLoaded', () => {
+        const camBox = document.querySelector('.camera-container-box');
+        if (camBox && typeof IrisThreeHUD !== 'undefined') {
+            irisHUD = new IrisThreeHUD(camBox, { soundEnabled: true });
+        }
+    });
 
     // 1. Khởi tạo Camera
     async function initCamera(deviceId = null) {
@@ -571,13 +582,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 overlayCtx.fillText(label, tagX + 8, tagY + 14);
                             });
 
+                            // Cập nhật mục tiêu cho Three.js 3D Hologram HUD
+                            if (irisHUD && validEyes.length > 0) {
+                                const primary = validEyes[0];
+                                const dispX = cw - (primary.x + primary.width);
+                                const cx = dispX + primary.width / 2;
+                                const cy = primary.y + primary.height / 2;
+                                irisHUD.setTarget(cx, cy, primary.width / 2, true);
+                            }
+
                             const now = Date.now();
                             // Nếu đang bật auto-scan và đã trôi qua 3 giây từ lần quét trước -> Tự động nhận diện
                             if (autoScanSwitch.checked && !isVerifying && (now - lastScanTime > 3000)) {
                                 lastScanTime = now;
                                 captureAndVerify();
                             }
+                        } else {
+                            if (irisHUD) irisHUD.setTarget(0, 0, 45, false);
                         }
+                    } else {
+                        if (irisHUD) irisHUD.setTarget(0, 0, 45, false);
                     }
                 });
 
@@ -594,7 +618,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         if (isVerifying) return;
         isVerifying = true;
 
-        statusText.innerHTML = '<i class="fas fa-spinner fa-spin text-primary me-1"></i> Đang nhận diện mống mắt...';
+        statusText.innerHTML = '<i class="fas fa-spinner fa-spin text-primary me-1"></i> Three.js AI đang quét mống mắt...';
 
         let blobToSend = customBlob;
 
@@ -623,6 +647,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             const data = await response.json();
 
             if (data.status === 'success') {
+                if (irisHUD) irisHUD.setState('SUCCESS');
                 statusText.innerHTML = `<i class="fas fa-check-circle text-success me-1"></i> Xin chào: ${data.user_name}`;
                 
                 if (autoScanInterval) clearInterval(autoScanInterval);
@@ -646,15 +671,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 });
 
             } else {
-                statusText.innerHTML = `<i class="fas fa-times-circle text-danger me-1"></i> ${data.message || 'Chưa nhận diện được'}`;
+                if (data.spoof_detected) {
+                    if (irisHUD) irisHUD.setState('SPOOF');
+                    statusText.innerHTML = `<i class="fas fa-triangle-exclamation text-danger me-1"></i> ${data.message}`;
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'CẢNH BÁO: PHÁT HIỆN GIẢ MẠO!',
+                        html: `
+                            <div class="text-start p-3 rounded-3 bg-danger bg-opacity-10 border border-danger mt-2">
+                                <div class="fw-bold text-danger mb-2"><i class="fas fa-shield-virus me-2"></i> ${data.message}</div>
+                                <div class="small text-secondary mb-2">Hệ thống AI quang học phát hiện dấu hiệu sử dụng màn hình điện tử hoặc ảnh in tĩnh 2D.</div>
+                                <div class="small font-mono text-danger">Bản ghi đã được lưu vào Access Logs để kiểm toán an ninh.</div>
+                            </div>
+                        `,
+                        confirmButtonColor: '#ef4444',
+                        confirmButtonText: 'Đã Hiểu'
+                    });
+                } else {
+                    if (irisHUD) irisHUD.setState('IDLE');
+                    statusText.innerHTML = `<i class="fas fa-times-circle text-danger me-1"></i> ${data.message || 'Chưa nhận diện được'}`;
+                }
                 setTimeout(() => {
                     if (!isVerifying) {
                         statusText.innerHTML = '<i class="fas fa-eye text-primary me-1"></i> Hãy nhìn tự nhiên vào camera...';
                     }
-                }, 2000);
+                }, 2500);
             }
 
         } catch (err) {
+            if (irisHUD) irisHUD.setState('IDLE');
             console.error("Verify API Error:", err);
             statusText.innerHTML = '<i class="fas fa-triangle-exclamation text-danger me-1"></i> Lỗi kết nối máy chủ AI';
         } finally {

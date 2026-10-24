@@ -1,0 +1,10 @@
+Windows Registry Editor Version 5.00
+
+; Desktop Shortcut for Iris Recognition System
+; Usage: Double-click this file to create desktop shortcut
+
+[HKEY_CURRENT_USER\Software\Classes\IrisRecognition]
+@="Iris Recognition System"
+
+[HKEY_CURRENT_USER\Software\Classes\IrisRecognition\shell\open\command]
+@="\"d:\\Chinh_AI\\GiangLT_AI\\START_SYSTEM.bat\""

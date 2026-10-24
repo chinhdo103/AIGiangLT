@@ -214,9 +214,9 @@ window.BiometricExporter = (function () {
         const irisArea = Math.round(Math.PI * (irisR * irisR - pupilR * pupilR)).toLocaleString('vi-VN');
         const totalTime = Math.round((seg.time_ms || 0) + (norm.time_ms || 0) + (ext.time_ms || 0) + (match.time_ms || 0) + (liveness.time_ms || 0));
 
-        // Tạo 4 ảnh Canvas Base64
-        const houghImg = generateHoughCanvasUrl(seg.pupil, seg.iris);
-        const daugmanImg = generateDaugmanCanvasUrl();
+        // Tạo hoặc sử dụng ảnh cắt lớp thực tế Base64
+        const houghImg = (seg.hough_img) || generateHoughCanvasUrl(seg.pupil, seg.iris);
+        const daugmanImg = (norm.strip_img) || generateDaugmanCanvasUrl();
         const compareImg = generateComparisonCanvasUrl(cosineScore, isGranted);
         const spectrumImg = generateSpectrumCanvasUrl();
 
