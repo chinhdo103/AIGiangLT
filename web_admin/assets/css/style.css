@@ -1,64 +1,107 @@
 /* ===================================================================
-   GIAO DIỆN QUẢN TRỊ SINH TRẮC HỌC DOANH NGHIỆP (MODERN LIGHT ENTERPRISE)
-   Font: Plus Jakarta Sans / Inter + JetBrains Mono
-   Theme: Clean Light Mode - Thanh Lịch, Sáng Rõ, Chuyên Nghiệp
+   GIAO DIỆN QUẢN TRỊ SINH TRẮC HỌC - PRODUCTION GRADE DARK SLATE THEME
+   Font: Inter + IBM Plex Mono
+   Theme: Dark Slate with Neon Accents - Professional Security Dashboard
+   Version: 2.0 - Multi-Template Iris Recognition System
    =================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
 
 :root {
-    --bg-body: #f8fafc;
-    --bg-surface: #ffffff;
-    --bg-surface-elevated: #ffffff;
-    --bg-subtle: #f1f5f9;
+    /* Dark Slate Base Colors */
+    --bg-body: #0F172A;
+    --bg-surface: #1E293B;
+    --bg-surface-elevated: #283347;
+    --bg-subtle: #334155;
+    --bg-card-dark: #1a2332;
     
-    --border-light: #e2e8f0;
-    --border-focus: #3b82f6;
+    /* Border Colors */
+    --border-light: rgba(255, 255, 255, 0.1);
+    --border-medium: rgba(255, 255, 255, 0.15);
+    --border-focus: #38BDF8;
+    --border-glow: rgba(56, 189, 248, 0.5);
     
-    --color-primary: #2563eb;
-    --color-primary-hover: #1d4ed8;
-    --color-primary-light: #eff6ff;
+    /* Primary Sky Blue Accent */
+    --color-primary: #38BDF8;
+    --color-primary-hover: #0EA5E9;
+    --color-primary-light: rgba(56, 189, 248, 0.15);
+    --color-primary-dark: #0284C7;
     
-    --color-emerald: #059669;
-    --color-emerald-light: #ecfdf5;
+    /* Teal Success */
+    --color-emerald: #4FD1C5;
+    --color-emerald-hover: #38B2AC;
+    --color-emerald-light: rgba(79, 209, 197, 0.15);
+    --color-emerald-dark: #319795;
     
-    --color-rose: #e11d48;
-    --color-rose-light: #fff1f2;
+    /* Rose/Red Alert */
+    --color-rose: #FB7185;
+    --color-rose-hover: #F43F5E;
+    --color-rose-light: rgba(251, 113, 133, 0.15);
+    --color-rose-dark: #E11D48;
     
-    --color-amber: #d97706;
-    --color-amber-light: #fffbeb;
+    /* Amber Warning */
+    --color-amber: #FBBF24;
+    --color-amber-hover: #F59E0B;
+    --color-amber-light: rgba(251, 191, 36, 0.15);
+    --color-amber-dark: #D97706;
     
-    --color-indigo: #4f46e5;
-    --color-indigo-light: #eef2ff;
+    /* Indigo/Purple */
+    --color-indigo: #A78BFA;
+    --color-indigo-hover: #8B5CF6;
+    --color-indigo-light: rgba(167, 139, 250, 0.15);
+    --color-indigo-dark: #7C3AED;
     
-    --text-primary: #0f172a;
-    --text-secondary: #475569;
-    --text-muted: #64748b;
+    /* Orange CTA */
+    --color-orange: #F97316;
+    --color-orange-hover: #EA580C;
+    --color-orange-light: rgba(249, 115, 22, 0.15);
     
-    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+    /* Text Colors */
+    --text-primary: #F8FAFC;
+    --text-secondary: #CBD5E1;
+    --text-muted: #94A3B8;
+    --text-dark: #64748B;
     
-    --sidebar-width: 260px;
-    --header-height: 70px;
+    /* Shadow Effects with Glow */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 4px 8px -2px rgba(0, 0, 0, 0.6), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    --shadow-glow-cyan: 0 0 20px rgba(56, 189, 248, 0.4);
+    --shadow-glow-emerald: 0 0 20px rgba(79, 209, 197, 0.4);
+    --shadow-glow-rose: 0 0 20px rgba(251, 113, 133, 0.4);
+    
+    /* Layout Dimensions */
+    --sidebar-width: 280px;
+    --header-height: 72px;
 }
 
 * {
+    margin: 0;
+    padding: 0;
     box-sizing: border-box;
 }
 
 body {
-    background-color: var(--bg-body);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
     color: var(--text-primary);
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    min-height: 100vh;
-    margin: 0;
+    background-color: var(--bg-body);
+    background-image: 
+        radial-gradient(circle at 20% 50%, rgba(56, 189, 248, 0.08) 0%, transparent 50%),
+        radial-gradient(circle at 80% 80%, rgba(167, 139, 250, 0.06) 0%, transparent 50%);
+    background-attachment: fixed;
     overflow-x: hidden;
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 /* Typography Helpers */
 .font-mono {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'IBM Plex Mono', 'Courier New', monospace;
+    font-feature-settings: "liga" 0, "calt" 0;
+    letter-spacing: -0.02em;
 }
 
 .text-cyan { color: var(--color-primary) !important; }
@@ -66,34 +109,90 @@ body {
 .text-indigo { color: var(--color-indigo) !important; }
 .text-rose { color: var(--color-rose) !important; }
 .text-amber { color: var(--color-amber) !important; }
+.text-orange { color: var(--color-orange) !important; }
 
-/* Clean Light Enterprise Cards */
-.glass-card {
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--text-primary);
+}
+
+::selection {
+    background-color: var(--color-primary-light);
+    color: var(--color-primary);
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
     background: var(--bg-surface);
+    border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--bg-subtle);
+    border-radius: 5px;
+    border: 2px solid var(--bg-surface);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--color-primary);
+}
+
+/* ===================================================================
+   DARK SLATE GLASS CARDS WITH GLOW
+   =================================================================== */
+.glass-card {
+    background: linear-gradient(135deg, 
+        rgba(30, 41, 59, 0.95) 0%, 
+        rgba(30, 41, 59, 0.85) 100%);
+    backdrop-filter: blur(20px);
     border: 1px solid var(--border-light);
     border-radius: 16px;
     box-shadow: var(--shadow-md);
-    transition: all 0.25s ease;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
+    overflow: hidden;
+}
+
+.glass-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, 
+        transparent, 
+        rgba(56, 189, 248, 0.1), 
+        transparent);
+    transition: left 0.5s ease;
+}
+
+.glass-card:hover::before {
+    left: 100%;
 }
 
 .glass-card:hover {
-    border-color: #cbd5e1;
-    box-shadow: var(--shadow-lg);
-}
-
-.glass-card.card-interactive:hover {
+    border-color: var(--border-glow);
+    box-shadow: var(--shadow-lg), var(--shadow-glow-cyan);
     transform: translateY(-2px);
 }
 
 /* Clean Gradient Text */
 .text-gradient-cyan {
-    background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #0284c7 100%);
+    background: linear-gradient(135deg, #38BDF8 0%, #0EA5E9 50%, #0284C7 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
-/* Layout Structure */
+/* ===================================================================
+   LAYOUT STRUCTURE - DARK THEME
+   =================================================================== */
 .app-wrapper {
     display: flex;
     min-height: 100vh;
@@ -102,7 +201,9 @@ body {
 .sidebar-wrapper {
     width: var(--sidebar-width);
     flex-shrink: 0;
-    background: #ffffff;
+    background: linear-gradient(180deg, 
+        rgba(15, 23, 42, 0.98) 0%, 
+        rgba(20, 29, 52, 0.98) 100%);
     border-right: 1px solid var(--border-light);
     position: fixed;
     top: 0;
@@ -111,8 +212,9 @@ body {
     z-index: 1040;
     display: flex;
     flex-direction: column;
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow-md);
     transition: transform 0.3s ease;
+    backdrop-filter: blur(10px);
 }
 
 .main-wrapper {
@@ -126,7 +228,9 @@ body {
 
 .top-navbar {
     height: var(--header-height);
-    background: #ffffff;
+    background: linear-gradient(90deg, 
+        rgba(30, 41, 59, 0.95) 0%, 
+        rgba(30, 41, 59, 0.90) 100%);
     border-bottom: 1px solid var(--border-light);
     padding: 0 2rem;
     position: sticky;
@@ -135,12 +239,14 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow-md);
+    backdrop-filter: blur(10px);
 }
 
 .content-container {
     padding: 2rem;
     flex-grow: 1;
+    background-color: var(--bg-body);
 }
 
 /* Brand Header */
@@ -156,13 +262,14 @@ body {
     width: 40px;
     height: 40px;
     border-radius: 10px;
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 18px;
-    color: white;
-    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+    color: var(--bg-body);
+    box-shadow: var(--shadow-glow-cyan);
+    font-weight: 700;
 }
 
 .sidebar-menu {
@@ -197,13 +304,14 @@ body {
 
 .nav-link-custom:hover {
     color: var(--color-primary);
-    background: var(--bg-subtle);
+    background: rgba(56, 189, 248, 0.1);
 }
 
 .nav-link-custom.active {
     color: var(--color-primary);
     background: var(--color-primary-light);
-    font-weight: 600;
+    font-weight: 700;
+    box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);
 }
 
 .nav-link-custom.active::before {
@@ -226,18 +334,20 @@ body {
 .sidebar-user-card {
     padding: 1rem 1.25rem;
     border-top: 1px solid var(--border-light);
-    background: var(--bg-subtle);
+    background: rgba(51, 65, 85, 0.4);
 }
 
-/* Buttons */
+/* ===================================================================
+   BUTTONS - NEON ACCENT DARK THEME
+   =================================================================== */
 .btn-cyber-primary {
-    background: var(--color-primary);
-    color: white !important;
-    font-weight: 600;
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
+    color: var(--bg-body) !important;
+    font-weight: 700;
     border: none;
     border-radius: 10px;
     padding: 0.65rem 1.3rem;
-    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+    box-shadow: var(--shadow-glow-cyan);
     transition: all 0.2s ease;
     display: inline-flex;
     align-items: center;
@@ -245,15 +355,15 @@ body {
 }
 
 .btn-cyber-primary:hover {
-    background: var(--color-primary-hover);
-    box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
-    color: white;
+    background: linear-gradient(135deg, var(--color-primary-hover) 0%, var(--color-primary-dark) 100%);
+    box-shadow: 0 0 30px rgba(56, 189, 248, 0.6);
+    color: var(--bg-body);
     transform: translateY(-1px);
 }
 
 .btn-cyber-secondary {
-    background: #ffffff;
-    border: 1px solid var(--border-light);
+    background: rgba(51, 65, 85, 0.5);
+    border: 1px solid var(--border-medium);
     color: var(--text-primary);
     font-weight: 500;
     border-radius: 10px;
@@ -264,25 +374,29 @@ body {
 .btn-cyber-secondary:hover {
     background: var(--bg-subtle);
     color: var(--text-primary);
-    border-color: #cbd5e1;
+    border-color: var(--border-glow);
 }
 
 .btn-cyber-danger {
-    background: var(--color-rose);
-    color: white !important;
-    font-weight: 600;
+    background: linear-gradient(135deg, var(--color-rose) 0%, var(--color-rose-hover) 100%);
+    color: var(--bg-body) !important;
+    font-weight: 700;
     border: none;
     border-radius: 10px;
     padding: 0.65rem 1.3rem;
+    box-shadow: var(--shadow-glow-rose);
     transition: all 0.2s ease;
 }
 
 .btn-cyber-danger:hover {
-    background: #be123c;
-    color: white;
+    background: var(--color-rose-dark);
+    color: var(--bg-body);
+    transform: translateY(-1px);
 }
 
-/* Badges */
+/* ===================================================================
+   BADGES
+   =================================================================== */
 .badge-role {
     font-size: 0.75rem;
     font-weight: 600;
@@ -296,25 +410,27 @@ body {
 .badge-role-admin {
     background: var(--color-amber-light);
     color: var(--color-amber);
-    border: 1px solid rgba(217, 119, 6, 0.25);
+    border: 1px solid rgba(251, 191, 36, 0.3);
 }
 
 .badge-role-user {
     background: var(--color-primary-light);
     color: var(--color-primary);
-    border: 1px solid rgba(37, 99, 235, 0.2);
+    border: 1px solid rgba(56, 189, 248, 0.3);
 }
 
 .badge-role-researcher {
     background: var(--color-indigo-light);
     color: var(--color-indigo);
-    border: 1px solid rgba(79, 70, 229, 0.25);
+    border: 1px solid rgba(167, 139, 250, 0.3);
 }
 
-/* Form Controls */
+/* ===================================================================
+   FORM CONTROLS - DARK INPUTS
+   =================================================================== */
 .form-control, .form-select {
-    background-color: #ffffff !important;
-    border: 1px solid var(--border-light) !important;
+    background-color: rgba(15, 23, 42, 0.6) !important;
+    border: 1px solid var(--border-medium) !important;
     color: var(--text-primary) !important;
     border-radius: 10px !important;
     padding: 0.65rem 0.95rem !important;
@@ -322,11 +438,20 @@ body {
     transition: all 0.2s ease;
 }
 
+.form-control::placeholder {
+    color: var(--text-dark);
+}
+
 .form-control:focus, .form-select:focus {
-    background-color: #ffffff !important;
+    background-color: rgba(15, 23, 42, 0.9) !important;
     border-color: var(--color-primary) !important;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15) !important;
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18) !important;
     outline: none;
+}
+
+.form-select option {
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
 }
 
 .form-label {
@@ -336,7 +461,9 @@ body {
     margin-bottom: 0.45rem;
 }
 
-/* Tables */
+/* ===================================================================
+   TABLES - DARK DATA GRID
+   =================================================================== */
 .table-cyber {
     width: 100%;
     margin-bottom: 0;
@@ -357,14 +484,14 @@ body {
 }
 
 .table-cyber tbody tr {
-    background: #ffffff;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    background: rgba(30, 41, 59, 0.7);
+    box-shadow: var(--shadow-sm);
     transition: all 0.2s ease;
 }
 
 .table-cyber tbody tr:hover {
-    background: #f8fafc;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
+    background: rgba(51, 65, 85, 0.7);
+    box-shadow: var(--shadow-md);
 }
 
 .table-cyber tbody td {
