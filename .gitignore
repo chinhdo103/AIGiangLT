@@ -1,0 +1,22 @@
+# Python environment & installer binaries
+python/
+python.zip
+python_installer.exe
+get-pip.py
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE & Editor history
+.history/
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Temporary files & logs
+*.log
+scratch/
