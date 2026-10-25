@@ -385,217 +385,323 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
         }
     }
 
-    // Bắt điểm mắt & khuôn mặt tự động bằng Tracking.js (Dual Face & Eye Tracker)
+    // HỆ THỐNG THỊ GIÁC MÁY TÍNH & BỘ ĐÔI NHẬN DIỆN MẮT KIOSK (Hybrid Vision & Smart Eye Lock)
+    const visionCanvas = document.createElement('canvas');
+    visionCanvas.width = 160;
+    visionCanvas.height = 120;
+    const visionCtx = visionCanvas.getContext('2d', { willReadFrequently: true });
+    let lastVisionLums = null;
+    let latestTrackerEyes = null;
+    let visionLoopTimer = null;
+
+    function analyzeCameraFrame() {
+        if (!video || !video.videoWidth || video.paused || video.ended) {
+            return { hasPerson: false, isSteady: false, eyePos: null };
+        }
+
+        try {
+            visionCtx.drawImage(video, 0, 0, 160, 120);
+            const imgData = visionCtx.getImageData(0, 0, 160, 120);
+            const data = imgData.data;
+            const totalPixels = 160 * 120;
+
+            let motionDiff = 0;
+            let skinPixels = 0;
+            let minLum = 255;
+            let maxLum = 0;
+            let sumLum = 0;
+
+            let darkestLum = 255;
+            let darkestX = 80;
+            let darkestY = 60;
+
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+
+                sumLum += lum;
+                if (lum < minLum) minLum = lum;
+                if (lum > maxLum) maxLum = lum;
+
+                if (r > 48 && g > 32 && b > 20 && r > b && (r - g) > 4 && (Math.max(r, g, b) - Math.min(r, g, b)) > 10) {
+                    skinPixels++;
+                }
+
+                if (lastVisionLums) {
+                    motionDiff += Math.abs(lum - lastVisionLums[i / 4]);
+                }
+
+                const px = (i / 4) % 160;
+                const py = Math.floor((i / 4) / 160);
+                if (px > 24 && px < 136 && py > 18 && py < 102) {
+                    if (lum < darkestLum) {
+                        darkestLum = lum;
+                        darkestX = px;
+                        darkestY = py;
+                    }
+                }
+            }
+
+            if (!lastVisionLums) {
+                lastVisionLums = new Float32Array(totalPixels);
+            }
+            for (let i = 0; i < data.length; i += 4) {
+                lastVisionLums[i / 4] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            }
+
+            const avgMotion = motionDiff / totalPixels;
+            const contrast = maxLum - minLum;
+            const skinRatio = skinPixels / totalPixels;
+            const avgLum = sumLum / totalPixels;
+
+            const hasPerson = (contrast >= 38 && (skinRatio >= 0.03 || darkestLum <= 78) && avgLum >= 22 && avgLum <= 235);
+            const isSteady = hasPerson && (avgMotion < 4.8);
+
+            const cw = video.offsetWidth || 640;
+            const ch = video.offsetHeight || 480;
+            const eyeX = (1 - (darkestX / 160)) * cw;
+            const eyeY = (darkestY / 120) * ch;
+
+            return {
+                hasPerson,
+                isSteady,
+                avgMotion,
+                contrast,
+                eyePos: { x: eyeX, y: eyeY }
+            };
+        } catch (e) {
+            return { hasPerson: false, isSteady: false, eyePos: null };
+        }
+    }
+
+    function drawCyberReticle(ctx, dispX, dispY, dispW, dispH, label) {
+        const cornerLen = Math.max(10, Math.min(22, dispW * 0.28));
+        const cx = dispX + dispW / 2;
+        const cy = dispY + dispH / 2;
+
+        ctx.shadowColor = 'rgba(16, 185, 129, 0.85)';
+        ctx.shadowBlur = 8;
+        ctx.strokeStyle = '#10b981';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+
+        ctx.beginPath();
+        ctx.moveTo(dispX, dispY + cornerLen);
+        ctx.lineTo(dispX, dispY);
+        ctx.lineTo(dispX + cornerLen, dispY);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(dispX + dispW - cornerLen, dispY);
+        ctx.lineTo(dispX + dispW);
+        ctx.lineTo(dispX + dispW, dispY + cornerLen);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(dispX, dispY + dispH - cornerLen);
+        ctx.lineTo(dispX, dispY + dispH);
+        ctx.lineTo(dispX + cornerLen, dispY + dispH);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(dispX + dispW - cornerLen, dispY + dispH);
+        ctx.lineTo(dispX + dispW);
+        ctx.lineTo(dispX + dispW, dispY + dispH - cornerLen);
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(52, 211, 153, 0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy);
+        ctx.moveTo(cx, cy - 6); ctx.lineTo(cx, cy + 6);
+        ctx.stroke();
+
+        ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+        const tagW = ctx.measureText(label).width + 16;
+        const tagH = 20;
+        const tagX = Math.max(4, Math.min(ctx.canvas.width - tagW - 4, dispX + (dispW - tagW) / 2));
+        const tagY = dispY > 26 ? dispY - 24 : dispY + dispH + 6;
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.beginPath();
+        ctx.roundRect(tagX, tagY, tagW, tagH, 5);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#34d399';
+        ctx.fillText(label, tagX + 8, tagY + 14);
+    }
+
     function startSmartEyeTracking() {
         try {
-            if (typeof tracking !== 'undefined') {
-                const tracker = new tracking.ObjectTracker(['face', 'eye']);
-                tracker.setStepSize(1.6);
-                tracker.setScaleFactor(1.15);
-                tracker.setMinDimension(28); // Hỗ trợ cả mắt nhỏ và khoảng cách xa
+            if (typeof tracking !== 'undefined' && !trackerTask) {
+                try {
+                    const tracker = new tracking.ObjectTracker(['face', 'eye']);
+                    tracker.setStepSize(1.7);
+                    tracker.setScaleFactor(1.18);
+                    tracker.setMinDimension(24);
 
-                tracker.on('track', function(event) {
-                    const cw = video.offsetWidth;
-                    const ch = video.offsetHeight;
-                    if (!cw || !ch) return;
-
-                    overlayCanvas.width = cw;
-                    overlayCanvas.height = ch;
-                    overlayCtx.clearRect(0, 0, cw, ch);
-
-                    if (event.data && event.data.length > 0) {
-                        const faces = event.data.filter(r => r.width >= 65);
-                        const rawEyes = event.data.filter(r => r.width >= 24 && r.width < 160);
-
-                        let validEyes = [];
-
-                        if (rawEyes.length > 0) {
-                            validEyes = rawEyes;
-                        } else if (faces.length > 0) {
-                            const f = faces[0];
-                            const eyeW = Math.round(f.width * 0.28);
-                            const eyeH = Math.round(f.height * 0.24);
-                            const eyeY = Math.round(f.y + f.height * 0.30);
-                            validEyes = [
-                                { x: Math.round(f.x + f.width * 0.18), y: eyeY, width: eyeW, height: eyeH },
-                                { x: Math.round(f.x + f.width * 0.54), y: eyeY, width: eyeW, height: eyeH }
-                            ];
+                    tracker.on('track', function(event) {
+                        if (event.data && event.data.length > 0) {
+                            latestTrackerEyes = { time: Date.now(), data: event.data };
                         }
+                    });
 
-                        if (validEyes.length > 2) {
-                            validEyes.sort((a, b) => b.width - a.width);
-                            validEyes = validEyes.slice(0, 2);
-                        }
-                        validEyes.sort((a, b) => a.x - b.x);
+                    trackerTask = tracking.track('#kioskVideo', tracker);
+                } catch (te) {
+                    console.warn("Tracker note:", te);
+                }
+            }
 
-                        if (validEyes.length > 0) {
-                            validEyes.forEach((rect, idx) => {
-                                const dispX = cw - (rect.x + rect.width);
-                                const dispY = rect.y;
-                                const dispW = rect.width;
-                                const dispH = rect.height;
-                                const cx = dispX + dispW / 2;
-                                const cy = dispY + dispH / 2;
-                                const cornerLen = Math.max(10, Math.min(22, dispW * 0.28));
+            if (visionLoopTimer) clearInterval(visionLoopTimer);
+            visionLoopTimer = setInterval(processVisionFrame, 90);
+        } catch (e) {
+            console.warn("Tracking start error:", e);
+        }
+    }
 
-                                overlayCtx.shadowColor = 'rgba(16, 185, 129, 0.8)';
-                                overlayCtx.shadowBlur = 8;
-                                overlayCtx.strokeStyle = '#10b981';
-                                overlayCtx.lineWidth = 2.5;
-                                overlayCtx.lineCap = 'round';
+    function processVisionFrame() {
+        if (!video || !video.videoWidth || video.paused || video.ended) return;
 
-                                overlayCtx.beginPath();
-                                overlayCtx.moveTo(dispX, dispY + cornerLen);
-                                overlayCtx.lineTo(dispX, dispY);
-                                overlayCtx.lineTo(dispX + cornerLen, dispY);
-                                overlayCtx.stroke();
+        const cw = video.offsetWidth;
+        const ch = video.offsetHeight;
+        if (!cw || !ch) return;
 
-                                overlayCtx.beginPath();
-                                overlayCtx.moveTo(dispX + dispW - cornerLen, dispY);
-                                overlayCtx.lineTo(dispX + dispW);
-                                overlayCtx.lineTo(dispX + dispW, dispY + cornerLen);
-                                overlayCtx.stroke();
+        overlayCanvas.width = cw;
+        overlayCanvas.height = ch;
+        overlayCtx.clearRect(0, 0, cw, ch);
 
-                                overlayCtx.beginPath();
-                                overlayCtx.moveTo(dispX, dispY + dispH - cornerLen);
-                                overlayCtx.lineTo(dispX, dispY + dispH);
-                                overlayCtx.lineTo(dispX + cornerLen, dispY + dispH);
-                                overlayCtx.stroke();
+        const vision = analyzeCameraFrame();
+        const now = Date.now();
 
-                                overlayCtx.beginPath();
-                                overlayCtx.moveTo(dispX + dispW - cornerLen, dispY + dispH);
-                                overlayCtx.lineTo(dispX + dispW, dispY + dispH);
-                                overlayCtx.lineTo(dispX + dispW, dispY + dispH - cornerLen);
-                                overlayCtx.stroke();
+        let hasTrackerBox = false;
+        let targetX = vision.eyePos ? vision.eyePos.x : cw / 2;
+        let targetY = vision.eyePos ? vision.eyePos.y : ch / 2;
+        let targetRadius = 45;
 
-                                overlayCtx.shadowBlur = 0;
-                                overlayCtx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
-                                overlayCtx.lineWidth = 1.5;
-                                overlayCtx.beginPath();
-                                overlayCtx.moveTo(cx - 5, cy); overlayCtx.lineTo(cx + 5, cy);
-                                overlayCtx.moveTo(cx, cy - 5); overlayCtx.lineTo(cx, cy + 5);
-                                overlayCtx.stroke();
+        if (latestTrackerEyes && (now - latestTrackerEyes.time < 400)) {
+            const rawEyes = latestTrackerEyes.data.filter(r => r.width >= 24 && r.width < 180);
+            const rawFaces = latestTrackerEyes.data.filter(r => r.width >= 65);
 
-                                const label = (validEyes.length === 2)
-                                    ? (idx === 0 ? 'MẮT PHẢI' : 'MẮT TRÁI')
-                                    : 'KHÓA NÉT MẮT';
+            let eyesToDraw = [];
+            if (rawEyes.length > 0) {
+                eyesToDraw = rawEyes.slice(0, 2);
+            } else if (rawFaces.length > 0) {
+                const f = rawFaces[0];
+                const eyeW = Math.round(f.width * 0.28);
+                const eyeH = Math.round(f.height * 0.24);
+                const eyeY = Math.round(f.y + f.height * 0.30);
+                eyesToDraw = [
+                    { x: Math.round(f.x + f.width * 0.18), y: eyeY, width: eyeW, height: eyeH },
+                    { x: Math.round(f.x + f.width * 0.54), y: eyeY, width: eyeW, height: eyeH }
+                ];
+            }
 
-                                overlayCtx.font = 'bold 11px system-ui, -apple-system, sans-serif';
-                                const tagW = overlayCtx.measureText(label).width + 16;
-                                const tagH = 20;
-                                const tagX = Math.max(4, Math.min(cw - tagW - 4, dispX + (dispW - tagW) / 2));
-                                const tagY = dispY > 26 ? dispY - 24 : dispY + dispH + 6;
-
-                                overlayCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-                                overlayCtx.beginPath();
-                                overlayCtx.roundRect(tagX, tagY, tagW, tagH, 5);
-                                overlayCtx.fill();
-                                overlayCtx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
-                                overlayCtx.lineWidth = 1;
-                                overlayCtx.stroke();
-
-                                overlayCtx.fillStyle = '#34d399';
-                                overlayCtx.fillText(label, tagX + 8, tagY + 14);
-                            });
-
-                            consecutiveEmptyFrames = 0;
-                            consecutivePresentFrames++;
-
-                            const primary = validEyes[0];
-                            const dispX = cw - (primary.x + primary.width);
-                            const cx = dispX + primary.width / 2;
-                            const cy = primary.y + primary.height / 2;
-
-                            if (kioskHUD) {
-                                kioskHUD.setTarget(cx, cy, primary.width / 2, true);
-                            }
-
-                            const now = Date.now();
-
-                            // Cooldown ngắn 2.8s sau lần quét trước
-                            if (now < cooldownUntil) {
-                                if (statusPill && !isScanning) {
-                                    statusPill.innerHTML = '<i class="fas fa-clock text-info me-1"></i> Đang chuẩn bị phiên tiếp theo...';
-                                }
-                                if (kioskHUD && !isScanning) {
-                                    kioskHUD.setState('COOLDOWN');
-                                }
-                                return;
-                            }
-
-                            // Đo độ ổn định vị trí (Jitter Check: ΔX, ΔY < 38px)
-                            const jitter = Math.hypot(cx - lastTrackPos.x, cy - lastTrackPos.y);
-                            lastTrackPos = { x: cx, y: cy };
-
-                            if (jitter < 38) {
-                                stableLockFrames++;
-                                const lockPercent = Math.min(100, Math.round((stableLockFrames / 5) * 100)); // 5 frames (~350ms) là đủ!
-
-                                if (kioskHUD) {
-                                    kioskHUD.setState('LOCKING');
-                                    kioskHUD.setLockProgress(lockPercent / 100);
-                                }
-
-                                if (statusPill && !isScanning) {
-                                    statusPill.innerHTML = `<i class="fas fa-bullseye text-warning fa-spin me-1"></i> [ĐÃ THẤY MẮT] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên khuôn mặt)...`;
-                                }
-
-                                if (lockPercent >= 100 && isAutoPresenceActive && !isScanning) {
-                                    cooldownUntil = now + 3200;
-                                    stableLockFrames = 0;
-                                    performScan();
-                                }
-                            } else {
-                                stableLockFrames = Math.max(0, stableLockFrames - 1);
-                                const lockPercent = Math.min(100, Math.round((stableLockFrames / 5) * 100));
-                                if (kioskHUD) kioskHUD.setLockProgress(lockPercent / 100);
-                                if (statusPill && !isScanning) {
-                                    statusPill.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
-                                }
-                            }
-                        } else {
-                            handleKioskNoPerson();
-                        }
-                    } else {
-                        handleKioskNoPerson();
-                    }
+            if (eyesToDraw.length > 0) {
+                hasTrackerBox = true;
+                eyesToDraw.sort((a, b) => a.x - b.x);
+                eyesToDraw.forEach((rect, idx) => {
+                    const dispX = cw - (rect.x + rect.width);
+                    const dispY = rect.y;
+                    const label = (eyesToDraw.length === 2) ? (idx === 0 ? 'MẮT PHẢI' : 'MẮT TRÁI') : 'KHÓA NÉT MẮT';
+                    drawCyberReticle(overlayCtx, dispX, dispY, rect.width, rect.height, label);
                 });
 
-                if (trackerTask) trackerTask.stop();
-                trackerTask = tracking.track('#kioskVideo', tracker);
-            }
-        } catch (e) {}
-    }
-
-    // Xử lý khi không có người trong tầm nhìn Kiosk
-    function handleKioskNoPerson() {
-        consecutiveEmptyFrames++;
-        consecutivePresentFrames = 0;
-        stableLockFrames = 0;
-
-        if (kioskHUD) {
-            kioskHUD.setLockProgress(0);
-        }
-
-        // Khi khung hình trống > 20 frame (~1.0s không thấy ai trước camera)
-        // -> Xác nhận người cũ ĐÃ RỜI ĐI, sẵn sàng đón NGƯỜI MỚI!
-        if (consecutiveEmptyFrames > 20) {
-            hasScannedCurrentPerson = false;
-            presenceState = 'EMPTY';
-            cooldownUntil = 0;
-
-            if (kioskHUD && !isScanning) {
-                kioskHUD.setTarget(0, 0, 45, false);
-                kioskHUD.setState('STANDBY');
-            }
-
-            if (statusPill && !isScanning) {
-                statusPill.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để mở cửa)';
+                const primary = eyesToDraw[0];
+                targetX = cw - (primary.x + primary.width / 2);
+                targetY = primary.y + primary.height / 2;
+                targetRadius = primary.width / 2;
             }
         }
+
+        const isPresent = vision.hasPerson || hasTrackerBox;
+
+        if (isPresent) {
+            consecutiveEmptyFrames = 0;
+            consecutivePresentFrames++;
+
+            if (!hasTrackerBox && vision.eyePos) {
+                const boxW = Math.round(cw * 0.26);
+                const boxH = Math.round(ch * 0.28);
+                const dispX = Math.max(10, Math.min(cw - boxW - 10, vision.eyePos.x - boxW / 2));
+                const dispY = Math.max(10, Math.min(ch - boxH - 10, vision.eyePos.y - boxH / 2));
+                drawCyberReticle(overlayCtx, dispX, dispY, boxW, boxH, 'KHÓA NÉT MẮT');
+                targetX = vision.eyePos.x;
+                targetY = vision.eyePos.y;
+                targetRadius = boxW / 2;
+            }
+
+            if (kioskHUD) {
+                kioskHUD.setTarget(targetX, targetY, targetRadius, true);
+            }
+
+            if (now < cooldownUntil) {
+                if (statusPill && !isScanning) {
+                    statusPill.innerHTML = '<i class="fas fa-clock text-info me-1"></i> Đang chuẩn bị phiên tiếp theo...';
+                }
+                if (kioskHUD && !isScanning) {
+                    kioskHUD.setState('COOLDOWN');
+                }
+                return;
+            }
+
+            const jitter = Math.hypot(targetX - lastTrackPos.x, targetY - lastTrackPos.y);
+            lastTrackPos = { x: targetX, y: targetY };
+
+            if (jitter < 42 || vision.isSteady) {
+                stableLockFrames++;
+                const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
+
+                if (kioskHUD) {
+                    kioskHUD.setState('LOCKING');
+                    kioskHUD.setLockProgress(lockPercent / 100);
+                }
+
+                if (statusPill && !isScanning) {
+                    statusPill.innerHTML = `<i class="fas fa-bullseye text-warning fa-spin me-1"></i> [ĐÃ THẤY MẮT] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên)...`;
+                }
+
+                if (lockPercent >= 100 && isAutoPresenceActive && !isScanning) {
+                    cooldownUntil = now + 3500;
+                    stableLockFrames = 0;
+                    performScan();
+                }
+            } else {
+                stableLockFrames = Math.max(0, stableLockFrames - 1);
+                const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
+                if (kioskHUD) kioskHUD.setLockProgress(lockPercent / 100);
+                if (statusPill && !isScanning) {
+                    statusPill.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
+                }
+            }
+        } else {
+            consecutiveEmptyFrames++;
+            consecutivePresentFrames = 0;
+            stableLockFrames = 0;
+
+            if (kioskHUD) {
+                kioskHUD.setLockProgress(0);
+            }
+
+            if (consecutiveEmptyFrames >= 6) {
+                if (kioskHUD && !isScanning) {
+                    kioskHUD.setTarget(0, 0, 45, false);
+                    kioskHUD.setState('STANDBY');
+                }
+
+                if (statusPill && !isScanning) {
+                    statusPill.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để quét)';
+                }
+            }
+        }
     }
 
-    async function performScan() {
+        async function performScan() {
         if (isScanning) return;
         isScanning = true;
 

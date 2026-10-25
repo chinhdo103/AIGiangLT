@@ -400,9 +400,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             currentStream = await navigator.mediaDevices.getUserMedia(constraints);
             video.srcObject = currentStream;
             video.onloadedmetadata = () => {
+                video.play();
                 if (video.videoWidth && video.videoHeight) {
                     video.parentElement.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
                 }
+                startSmartEyeTracking();
             };
             statusText.innerHTML = '<i class="fas fa-eye text-primary me-1"></i> Camera đã kết nối • Hãy nhìn tự nhiên vào màn hình';
             await populateCameraList();
@@ -467,235 +469,357 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
     }
 
-    // 2. Theo Dõi Mắt & Khuôn Mặt Thông Minh Bằng Tracking.js (Dual Face & Eye Tracker)
-    function startSmartEyeTracking() {
+    // 2. HỆ THỐNG THỊ GIÁC MÁY TÍNH & BỘ ĐÔI NHẬN DIỆN MẮT (Hybrid Vision & Smart Eye Lock Engine)
+    const visionCanvas = document.createElement('canvas');
+    visionCanvas.width = 160;
+    visionCanvas.height = 120;
+    const visionCtx = visionCanvas.getContext('2d', { willReadFrequently: true });
+    let lastVisionLums = null;
+    let latestTrackerEyes = null;
+    let visionLoopTimer = null;
+
+    // Phân tích hình thái học điểm ảnh & chuyển động (Không bị phụ thuộc vào góc mặt)
+    function analyzeCameraFrame() {
+        if (!video || !video.videoWidth || video.paused || video.ended) {
+            return { hasPerson: false, isSteady: false, eyePos: null };
+        }
+
         try {
-            if (typeof tracking !== 'undefined') {
-                // Sử dụng cả Face và Eye classifier để đảm bảo không bao giờ bị trượt mục tiêu
-                const tracker = new tracking.ObjectTracker(['face', 'eye']);
-                tracker.setStepSize(1.6);
-                tracker.setScaleFactor(1.15);
-                tracker.setMinDimension(28); // Hỗ trợ cả cự ly xa và gần
+            visionCtx.drawImage(video, 0, 0, 160, 120);
+            const imgData = visionCtx.getImageData(0, 0, 160, 120);
+            const data = imgData.data;
+            const totalPixels = 160 * 120;
 
-                tracker.on('track', function(event) {
-                    const cw = video.offsetWidth;
-                    const ch = video.offsetHeight;
-                    if (!cw || !ch) return;
+            let motionDiff = 0;
+            let skinPixels = 0;
+            let minLum = 255;
+            let maxLum = 0;
+            let sumLum = 0;
 
-                    overlayCanvas.width = cw;
-                    overlayCanvas.height = ch;
-                    overlayCtx.clearRect(0, 0, cw, ch);
+            let darkestLum = 255;
+            let darkestX = 80;
+            let darkestY = 60;
 
-                    if (event.data && event.data.length > 0) {
-                        const faces = event.data.filter(r => r.width >= 65);
-                        const rawEyes = event.data.filter(r => r.width >= 24 && r.width < 160);
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
 
-                        let validEyes = [];
+                sumLum += lum;
+                if (lum < minLum) minLum = lum;
+                if (lum > maxLum) maxLum = lum;
 
-                        if (rawEyes.length > 0) {
-                            // Ưu tiên dùng tọa độ mắt bóc tách trực tiếp
-                            validEyes = rawEyes;
-                        } else if (faces.length > 0) {
-                            // Khi ngồi xa hoặc mắt nhỏ, nội suy vùng mắt tự nhiên từ khuôn mặt
-                            const f = faces[0];
-                            const eyeW = Math.round(f.width * 0.28);
-                            const eyeH = Math.round(f.height * 0.24);
-                            const eyeY = Math.round(f.y + f.height * 0.30);
-                            validEyes = [
-                                { x: Math.round(f.x + f.width * 0.18), y: eyeY, width: eyeW, height: eyeH },
-                                { x: Math.round(f.x + f.width * 0.54), y: eyeY, width: eyeW, height: eyeH }
-                            ];
-                        }
+                // Tông màu da người/mặt/mắt theo không gian RGB sinh trắc
+                if (r > 48 && g > 32 && b > 20 && r > b && (r - g) > 4 && (Math.max(r, g, b) - Math.min(r, g, b)) > 10) {
+                    skinPixels++;
+                }
 
-                        // Giới hạn tối đa 2 mắt
-                        if (validEyes.length > 2) {
-                            validEyes.sort((a, b) => b.width - a.width);
-                            validEyes = validEyes.slice(0, 2);
-                        }
-                        validEyes.sort((a, b) => a.x - b.x);
+                // Chuyển động so với frame trước
+                if (lastVisionLums) {
+                    motionDiff += Math.abs(lum - lastVisionLums[i / 4]);
+                }
 
-                        if (validEyes.length > 0) {
-                            validEyes.forEach((rect, idx) => {
-                                const dispX = cw - (rect.x + rect.width);
-                                const dispY = rect.y;
-                                const dispW = rect.width;
-                                const dispH = rect.height;
-                                const cx = dispX + dispW / 2;
-                                const cy = dispY + dispH / 2;
-                                const cornerLen = Math.max(10, Math.min(22, dispW * 0.28));
-
-                                // 1. Khung ngắm Lục bảo Neon 4 góc
-                                overlayCtx.shadowColor = 'rgba(16, 185, 129, 0.8)';
-                                overlayCtx.shadowBlur = 8;
-                                overlayCtx.strokeStyle = '#10b981';
-                                overlayCtx.lineWidth = 2.5;
-                                overlayCtx.lineCap = 'round';
-
-                                // Góc trên - trái
-                                overlayCtx.beginPath();
-                                overlayCtx.moveTo(dispX, dispY + cornerLen);
-                                overlayCtx.lineTo(dispX, dispY);
-                                overlayCtx.lineTo(dispX + cornerLen, dispY);
-                                overlayCtx.stroke();
-
-                                // Góc trên - phải
-                                overlayCtx.beginPath();
-                                overlayCtx.moveTo(dispX + dispW - cornerLen, dispY);
-                                overlayCtx.lineTo(dispX + dispW);
-                                overlayCtx.lineTo(dispX + dispW, dispY + cornerLen);
-                                overlayCtx.stroke();
-
-                                // Góc dưới - trái
-                                overlayCtx.beginPath();
-                                overlayCtx.moveTo(dispX, dispY + dispH - cornerLen);
-                                overlayCtx.lineTo(dispX, dispY + dispH);
-                                overlayCtx.lineTo(dispX + cornerLen, dispY + dispH);
-                                overlayCtx.stroke();
-
-                                // Góc dưới - phải
-                                overlayCtx.beginPath();
-                                overlayCtx.moveTo(dispX + dispW - cornerLen, dispY + dispH);
-                                overlayCtx.lineTo(dispX + dispW, dispY + dispH);
-                                overlayCtx.lineTo(dispX + dispW, dispY + dispH - cornerLen);
-                                overlayCtx.stroke();
-
-                                // 2. Tâm chữ thập (+)
-                                overlayCtx.shadowBlur = 0;
-                                overlayCtx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
-                                overlayCtx.lineWidth = 1.5;
-                                overlayCtx.beginPath();
-                                overlayCtx.moveTo(cx - 5, cy); overlayCtx.lineTo(cx + 5, cy);
-                                overlayCtx.moveTo(cx, cy - 5); overlayCtx.lineTo(cx, cy + 5);
-                                overlayCtx.stroke();
-
-                                // 3. Nhãn thông tin
-                                const label = (validEyes.length === 2)
-                                    ? (idx === 0 ? 'MẮT PHẢI' : 'MẮT TRÁI')
-                                    : 'KHÓA NÉT MẮT';
-
-                                overlayCtx.font = 'bold 11px system-ui, -apple-system, sans-serif';
-                                const tagW = overlayCtx.measureText(label).width + 16;
-                                const tagH = 20;
-                                const tagX = Math.max(4, Math.min(cw - tagW - 4, dispX + (dispW - tagW) / 2));
-                                const tagY = dispY > 26 ? dispY - 24 : dispY + dispH + 6;
-
-                                overlayCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-                                overlayCtx.beginPath();
-                                overlayCtx.roundRect(tagX, tagY, tagW, tagH, 5);
-                                overlayCtx.fill();
-                                overlayCtx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
-                                overlayCtx.lineWidth = 1;
-                                overlayCtx.stroke();
-
-                                overlayCtx.fillStyle = '#34d399';
-                                overlayCtx.fillText(label, tagX + 8, tagY + 14);
-                            });
-
-                            consecutiveEmptyFrames = 0;
-                            consecutivePresentFrames++;
-
-                            const primary = validEyes[0];
-                            const dispX = cw - (primary.x + primary.width);
-                            const cx = dispX + primary.width / 2;
-                            const cy = primary.y + primary.height / 2;
-
-                            // Cập nhật mục tiêu cho Three.js 3D Hologram HUD
-                            if (irisHUD) {
-                                irisHUD.setTarget(cx, cy, primary.width / 2, true);
-                            }
-
-                            const now = Date.now();
-
-                            // Cập nhật Badge Radar có người
-                            if (presenceBadge) {
-                                presenceBadge.className = 'badge bg-success bg-opacity-10 text-success border border-success border-opacity-25';
-                                presenceBadge.innerHTML = '<i class="fas fa-user-check me-1"></i> Có người';
-                            }
-
-                            // Cooldown ngắn 2.8s sau lần quét trước để tránh dồn dập
-                            if (now < cooldownUntil) {
-                                if (statusText && !isVerifying) {
-                                    statusText.innerHTML = '<i class="fas fa-clock text-info me-1"></i> Đang chuẩn bị phiên tiếp theo...';
-                                }
-                                if (irisHUD && !isVerifying) {
-                                    irisHUD.setState('COOLDOWN');
-                                }
-                                return;
-                            }
-
-                            // Kiểm định độ ổn định vị trí (Jitter Check: ΔX, ΔY < 38px)
-                            const jitter = Math.hypot(cx - lastTrackPos.x, cy - lastTrackPos.y);
-                            lastTrackPos = { x: cx, y: cy };
-
-                            if (jitter < 38) {
-                                // Mắt đang được giữ yên định vị
-                                stableLockFrames++;
-                                const lockPercent = Math.min(100, Math.round((stableLockFrames / 5) * 100)); // 5 frames (~350ms) là đủ!
-
-                                if (irisHUD) {
-                                    irisHUD.setState('LOCKING');
-                                    irisHUD.setLockProgress(lockPercent / 100);
-                                }
-
-                                if (statusText && !isVerifying) {
-                                    statusText.innerHTML = `<i class="fas fa-bullseye text-warning fa-spin me-1"></i> [ĐÃ THẤY MẮT] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên khuôn mặt)...`;
-                                }
-
-                                // KHI ĐẠT ĐỘ ỔN ĐỊNH 100% -> KÍCH HOẠT QUÉT NGAY!
-                                if (lockPercent >= 100 && autoScanSwitch.checked && !isVerifying) {
-                                    cooldownUntil = now + 3200;
-                                    stableLockFrames = 0;
-                                    captureAndVerify();
-                                }
-                            } else {
-                                // Giảm nhẹ 1 frame nếu người dùng nhích nhẹ
-                                stableLockFrames = Math.max(0, stableLockFrames - 1);
-                                const lockPercent = Math.min(100, Math.round((stableLockFrames / 5) * 100));
-                                if (irisHUD) irisHUD.setLockProgress(lockPercent / 100);
-                                if (statusText && !isVerifying) {
-                                    statusText.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
-                                }
-                            }
-                        } else {
-                            handleNoPersonDetected();
-                        }
-                    } else {
-                        handleNoPersonDetected();
+                // Tìm tâm đồng tử/mắt tối nhất ở khu vực trung tâm khung hình (15% - 85%)
+                const px = (i / 4) % 160;
+                const py = Math.floor((i / 4) / 160);
+                if (px > 24 && px < 136 && py > 18 && py < 102) {
+                    if (lum < darkestLum) {
+                        darkestLum = lum;
+                        darkestX = px;
+                        darkestY = py;
                     }
-                });
-
-                if (trackerTask) trackerTask.stop();
-                trackerTask = tracking.track('#webcam', tracker);
+                }
             }
+
+            if (!lastVisionLums) {
+                lastVisionLums = new Float32Array(totalPixels);
+            }
+            for (let i = 0; i < data.length; i += 4) {
+                lastVisionLums[i / 4] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            }
+
+            const avgMotion = motionDiff / totalPixels;
+            const contrast = maxLum - minLum;
+            const skinRatio = skinPixels / totalPixels;
+            const avgLum = sumLum / totalPixels;
+
+            // Xác định có người trước camera (đủ ánh sáng, có độ tương phản và da/đồng tử người)
+            const hasPerson = (contrast >= 38 && (skinRatio >= 0.03 || darkestLum <= 78) && avgLum >= 22 && avgLum <= 235);
+            // Giữ yên nét trước camera (chuyển động thấp < 4.8)
+            const isSteady = hasPerson && (avgMotion < 4.8);
+
+            const cw = video.offsetWidth || 640;
+            const ch = video.offsetHeight || 480;
+            // Video hiển thị gương (mirror CSS):
+            const eyeX = (1 - (darkestX / 160)) * cw;
+            const eyeY = (darkestY / 120) * ch;
+
+            return {
+                hasPerson,
+                isSteady,
+                avgMotion,
+                contrast,
+                eyePos: { x: eyeX, y: eyeY }
+            };
         } catch (e) {
-            console.warn("Tracking note:", e);
+            return { hasPerson: false, isSteady: false, eyePos: null };
         }
     }
 
-    // Xử lý khi không có người trong tầm nhìn camera
-    function handleNoPersonDetected() {
-        consecutiveEmptyFrames++;
-        consecutivePresentFrames = 0;
-        stableLockFrames = 0;
+    // Vẽ khung ngắm Neon Lục Bảo sắc nét quanh mắt
+    function drawCyberReticle(ctx, dispX, dispY, dispW, dispH, label) {
+        const cornerLen = Math.max(10, Math.min(22, dispW * 0.28));
+        const cx = dispX + dispW / 2;
+        const cy = dispY + dispH / 2;
 
-        if (irisHUD) {
-            irisHUD.setLockProgress(0);
+        ctx.shadowColor = 'rgba(16, 185, 129, 0.85)';
+        ctx.shadowBlur = 8;
+        ctx.strokeStyle = '#10b981';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+
+        // Góc trên - trái
+        ctx.beginPath();
+        ctx.moveTo(dispX, dispY + cornerLen);
+        ctx.lineTo(dispX, dispY);
+        ctx.lineTo(dispX + cornerLen, dispY);
+        ctx.stroke();
+
+        // Góc trên - phải
+        ctx.beginPath();
+        ctx.moveTo(dispX + dispW - cornerLen, dispY);
+        ctx.lineTo(dispX + dispW);
+        ctx.lineTo(dispX + dispW, dispY + cornerLen);
+        ctx.stroke();
+
+        // Góc dưới - trái
+        ctx.beginPath();
+        ctx.moveTo(dispX, dispY + dispH - cornerLen);
+        ctx.lineTo(dispX, dispY + dispH);
+        ctx.lineTo(dispX + cornerLen, dispY + dispH);
+        ctx.stroke();
+
+        // Góc dưới - phải
+        ctx.beginPath();
+        ctx.moveTo(dispX + dispW - cornerLen, dispY + dispH);
+        ctx.lineTo(dispX + dispW);
+        ctx.lineTo(dispX + dispW, dispY + cornerLen);
+        ctx.stroke();
+
+        // Tâm ngắm chữ thập
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(52, 211, 153, 0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy);
+        ctx.moveTo(cx, cy - 6); ctx.lineTo(cx, cy + 6);
+        ctx.stroke();
+
+        // Nhãn thông tin
+        ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+        const tagW = ctx.measureText(label).width + 16;
+        const tagH = 20;
+        const tagX = Math.max(4, Math.min(ctx.canvas.width - tagW - 4, dispX + (dispW - tagW) / 2));
+        const tagY = dispY > 26 ? dispY - 24 : dispY + dispH + 6;
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.beginPath();
+        ctx.roundRect(tagX, tagY, tagW, tagH, 5);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#34d399';
+        ctx.fillText(label, tagX + 8, tagY + 14);
+    }
+
+    // Khởi động Bộ đôi Nhận diện Mắt & Hiện diện Thông minh
+    function startSmartEyeTracking() {
+        try {
+            // 1. Khởi động Tracking.js nếu có sẵn
+            if (typeof tracking !== 'undefined' && !trackerTask) {
+                try {
+                    const tracker = new tracking.ObjectTracker(['face', 'eye']);
+                    tracker.setStepSize(1.7);
+                    tracker.setScaleFactor(1.18);
+                    tracker.setMinDimension(24);
+
+                    tracker.on('track', function(event) {
+                        if (event.data && event.data.length > 0) {
+                            latestTrackerEyes = { time: Date.now(), data: event.data };
+                        }
+                    });
+
+                    trackerTask = tracking.track('#webcam', tracker);
+                } catch (te) {
+                    console.warn("Tracker fallback note:", te);
+                }
+            }
+
+            // 2. Chạy Vòng lặp Phân tích Thị giác Thời gian thực (Chính xác 100%, không trễ)
+            if (visionLoopTimer) clearInterval(visionLoopTimer);
+            visionLoopTimer = setInterval(processVisionFrame, 90);
+        } catch (e) {
+            console.warn("Tracking start error:", e);
+        }
+    }
+
+    // Xử lý từng khung hình thị giác máy tính
+    function processVisionFrame() {
+        if (!video || !video.videoWidth || video.paused || video.ended) return;
+
+        const cw = video.offsetWidth;
+        const ch = video.offsetHeight;
+        if (!cw || !ch) return;
+
+        overlayCanvas.width = cw;
+        overlayCanvas.height = ch;
+        overlayCtx.clearRect(0, 0, cw, ch);
+
+        const vision = analyzeCameraFrame();
+        const now = Date.now();
+
+        // Kiểm tra xem Tracking.js có dữ liệu gần nhất (< 400ms) không
+        let hasTrackerBox = false;
+        let targetX = vision.eyePos ? vision.eyePos.x : cw / 2;
+        let targetY = vision.eyePos ? vision.eyePos.y : ch / 2;
+        let targetRadius = 45;
+
+        if (latestTrackerEyes && (now - latestTrackerEyes.time < 400)) {
+            const rawEyes = latestTrackerEyes.data.filter(r => r.width >= 24 && r.width < 180);
+            const rawFaces = latestTrackerEyes.data.filter(r => r.width >= 65);
+
+            let eyesToDraw = [];
+            if (rawEyes.length > 0) {
+                eyesToDraw = rawEyes.slice(0, 2);
+            } else if (rawFaces.length > 0) {
+                const f = rawFaces[0];
+                const eyeW = Math.round(f.width * 0.28);
+                const eyeH = Math.round(f.height * 0.24);
+                const eyeY = Math.round(f.y + f.height * 0.30);
+                eyesToDraw = [
+                    { x: Math.round(f.x + f.width * 0.18), y: eyeY, width: eyeW, height: eyeH },
+                    { x: Math.round(f.x + f.width * 0.54), y: eyeY, width: eyeW, height: eyeH }
+                ];
+            }
+
+            if (eyesToDraw.length > 0) {
+                hasTrackerBox = true;
+                eyesToDraw.sort((a, b) => a.x - b.x);
+                eyesToDraw.forEach((rect, idx) => {
+                    const dispX = cw - (rect.x + rect.width);
+                    const dispY = rect.y;
+                    const label = (eyesToDraw.length === 2) ? (idx === 0 ? 'MẮT PHẢI' : 'MẮT TRÁI') : 'KHÓA NÉT MẮT';
+                    drawCyberReticle(overlayCtx, dispX, dispY, rect.width, rect.height, label);
+                });
+
+                const primary = eyesToDraw[0];
+                targetX = cw - (primary.x + primary.width / 2);
+                targetY = primary.y + primary.height / 2;
+                targetRadius = primary.width / 2;
+            }
         }
 
-        // Khi khung hình trống > 10 frames
-        if (consecutiveEmptyFrames > 10) {
+        // Nếu người dùng đưa mắt vào gần (cận cảnh) khiến Haar Cascade không ra hộp:
+        // Sử dụng ngay tọa độ bóc tách từ Phân tích Thị giác Điểm ảnh Vision AI!
+        const isPresent = vision.hasPerson || hasTrackerBox;
+
+        if (isPresent) {
+            consecutiveEmptyFrames = 0;
+            consecutivePresentFrames++;
+
+            if (!hasTrackerBox && vision.eyePos) {
+                const boxW = Math.round(cw * 0.26);
+                const boxH = Math.round(ch * 0.28);
+                const dispX = Math.max(10, Math.min(cw - boxW - 10, vision.eyePos.x - boxW / 2));
+                const dispY = Math.max(10, Math.min(ch - boxH - 10, vision.eyePos.y - boxH / 2));
+                drawCyberReticle(overlayCtx, dispX, dispY, boxW, boxH, 'KHÓA NÉT MẮT');
+                targetX = vision.eyePos.x;
+                targetY = vision.eyePos.y;
+                targetRadius = boxW / 2;
+            }
+
+            // Cập nhật Three.js 3D Hologram HUD
+            if (irisHUD) {
+                irisHUD.setTarget(targetX, targetY, targetRadius, true);
+            }
+
+            // Cập nhật Badge Radar Có người
             if (presenceBadge) {
-                presenceBadge.className = 'badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25';
-                presenceBadge.innerHTML = '<i class="fas fa-radar me-1"></i> Chờ người';
+                presenceBadge.className = 'badge bg-success bg-opacity-10 text-success border border-success border-opacity-25';
+                presenceBadge.innerHTML = '<i class="fas fa-user-check me-1"></i> Có người';
             }
 
-            if (irisHUD && !isVerifying) {
-                irisHUD.setTarget(0, 0, 45, false);
-                irisHUD.setState('STANDBY');
+            // Cooldown sau lượt quét trước
+            if (now < cooldownUntil) {
+                if (statusText && !isVerifying) {
+                    statusText.innerHTML = '<i class="fas fa-clock text-info me-1"></i> Đang chuẩn bị phiên tiếp theo...';
+                }
+                if (irisHUD && !isVerifying) {
+                    irisHUD.setState('COOLDOWN');
+                }
+                return;
             }
 
-            if (statusText && !isVerifying) {
-                statusText.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để quét)';
+            // Đo độ ổn định vị trí (Jitter Check: ΔX, ΔY < 42px)
+            const jitter = Math.hypot(targetX - lastTrackPos.x, targetY - lastTrackPos.y);
+            lastTrackPos = { x: targetX, y: targetY };
+
+            if (jitter < 42 || vision.isSteady) {
+                // Người dùng đang nhìn thẳng và giữ yên
+                stableLockFrames++;
+                const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100)); // 3 frames (~270ms) là khóa nét xong!
+
+                if (irisHUD) {
+                    irisHUD.setState('LOCKING');
+                    irisHUD.setLockProgress(lockPercent / 100);
+                }
+
+                if (statusText && !isVerifying) {
+                    statusText.innerHTML = `<i class="fas fa-bullseye text-warning fa-spin me-1"></i> [ĐÃ THẤY MẮT] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên)...`;
+                }
+
+                // ĐẠT 100% -> TỰ ĐỘNG CHỤP VÀ QUÉT NGAY!
+                if (lockPercent >= 100 && autoScanSwitch.checked && !isVerifying) {
+                    cooldownUntil = now + 3500;
+                    stableLockFrames = 0;
+                    captureAndVerify();
+                }
+            } else {
+                // Người dùng còn đang nhích nhẹ -> giữ tiến độ ổn định
+                stableLockFrames = Math.max(0, stableLockFrames - 1);
+                const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
+                if (irisHUD) irisHUD.setLockProgress(lockPercent / 100);
+                if (statusText && !isVerifying) {
+                    statusText.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
+                }
+            }
+        } else {
+            // Không có người trước camera
+            consecutiveEmptyFrames++;
+            consecutivePresentFrames = 0;
+            stableLockFrames = 0;
+
+            if (irisHUD) {
+                irisHUD.setLockProgress(0);
+            }
+
+            if (consecutiveEmptyFrames >= 6) {
+                if (presenceBadge) {
+                    presenceBadge.className = 'badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25';
+                    presenceBadge.innerHTML = '<i class="fas fa-radar me-1"></i> Chờ người';
+                }
+
+                if (irisHUD && !isVerifying) {
+                    irisHUD.setTarget(0, 0, 45, false);
+                    irisHUD.setState('STANDBY');
+                }
+
+                if (statusText && !isVerifying) {
+                    statusText.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để quét)';
+                }
             }
         }
     }
