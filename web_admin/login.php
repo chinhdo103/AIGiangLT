@@ -231,7 +231,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
                             <!-- Trạng thái quét nổi -->
                             <div class="status-pill text-dark" id="scanStatusText">
-                                <i class="fas fa-eye text-primary me-1"></i> Hãy nhìn tự nhiên vào camera...
+                                <i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để quét)
                             </div>
                         </div>
 
@@ -260,12 +260,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 <i class="fas fa-camera"></i> QUÉT MỐNG MẮT NGAY
                             </button>
 
-                            <!-- Tự động nhận diện khi phát hiện mắt -->
-                            <div class="form-check form-switch mb-4 p-2 bg-light rounded-3 border">
-                                <input class="form-check-input ms-0 me-2" type="checkbox" id="autoScanSwitch" checked>
-                                <label class="form-check-label small text-dark fw-semibold" for="autoScanSwitch">
-                                    Tự động nhận diện liên tục (Auto-detect)
-                                </label>
+                            <!-- Tự động nhận diện khi phát hiện người tiếp cận -->
+                            <div class="form-check form-switch mb-4 p-2 bg-light rounded-3 border d-flex align-items-center justify-content-between">
+                                <div>
+                                    <input class="form-check-input ms-0 me-2" type="checkbox" id="autoScanSwitch" checked>
+                                    <label class="form-check-label small text-dark fw-semibold" for="autoScanSwitch">
+                                        Tự động quét khi phát hiện người (Smart Presence)
+                                    </label>
+                                </div>
+                                <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25" id="presenceStatusBadge">
+                                    <i class="fas fa-radar me-1"></i> Chờ người
+                                </span>
                             </div>
 
                             <!-- Hoặc Upload file ảnh mống mắt dự phòng -->
@@ -357,9 +362,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     let currentStream = null;
     let isVerifying = false;
-    let autoScanInterval = null;
     let trackerTask = null;
     let lastScanTime = 0;
+
+    // Quản lý Trạng thái Phát hiện Người & Khóa nét Thông minh (Smart Presence State Machine)
+    let presenceState = 'EMPTY'; // 'EMPTY' | 'APPROACHING' | 'LOCKING' | 'SCANNED_WAIT_LEAVE'
+    let consecutiveEmptyFrames = 0;
+    let consecutivePresentFrames = 0;
+    let stableLockFrames = 0;
+    const REQUIRED_STABLE_FRAMES = 12; // ~500-600ms giữ ổn định mắt
+    let lastTrackPos = { x: 0, y: 0 };
+    let hasScannedCurrentPerson = false;
+    let cooldownUntil = 0;
+    const presenceBadge = document.getElementById('presenceStatusBadge');
 
     // Khởi tạo Three.js Biometric Hologram HUD
     let irisHUD = null;
@@ -582,26 +597,82 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 overlayCtx.fillText(label, tagX + 8, tagY + 14);
                             });
 
+                            consecutiveEmptyFrames = 0;
+                            consecutivePresentFrames++;
+
+                            const primary = validEyes[0];
+                            const dispX = cw - (primary.x + primary.width);
+                            const cx = dispX + primary.width / 2;
+                            const cy = primary.y + primary.height / 2;
+
                             // Cập nhật mục tiêu cho Three.js 3D Hologram HUD
-                            if (irisHUD && validEyes.length > 0) {
-                                const primary = validEyes[0];
-                                const dispX = cw - (primary.x + primary.width);
-                                const cx = dispX + primary.width / 2;
-                                const cy = primary.y + primary.height / 2;
+                            if (irisHUD) {
                                 irisHUD.setTarget(cx, cy, primary.width / 2, true);
                             }
 
                             const now = Date.now();
-                            // Nếu đang bật auto-scan và đã trôi qua 3 giây từ lần quét trước -> Tự động nhận diện
-                            if (autoScanSwitch.checked && !isVerifying && (now - lastScanTime > 3000)) {
-                                lastScanTime = now;
-                                captureAndVerify();
+
+                            // Cập nhật Badge Radar có người
+                            if (presenceBadge) {
+                                presenceBadge.className = 'badge bg-success bg-opacity-10 text-success border border-success border-opacity-25';
+                                presenceBadge.innerHTML = '<i class="fas fa-user-check me-1"></i> Có người';
+                            }
+
+                            // 1. Kiểm tra nếu người này đã vừa được quét xong và chưa rời khỏi tầm nhìn -> KHÔNG QUÉT LẠI
+                            if (hasScannedCurrentPerson || now < cooldownUntil) {
+                                if (statusText && !isVerifying) {
+                                    statusText.innerHTML = '<i class="fas fa-user-shield text-info me-1"></i> Đã nhận diện phiên này. Vui lòng rời vị trí để tiếp tục phiên mới...';
+                                }
+                                if (irisHUD && !isVerifying) {
+                                    irisHUD.setState('COOLDOWN');
+                                }
+                                return;
+                            }
+
+                            // 2. Nếu là người mới tiếp cận:
+                            if (presenceState === 'EMPTY') {
+                                presenceState = 'APPROACHING';
+                                if (irisHUD) irisHUD.setState('DETECTED');
+                            }
+
+                            // 3. Kiểm định độ ổn định vị trí (Jitter Check: ΔX, ΔY < 26px)
+                            const jitter = Math.hypot(cx - lastTrackPos.x, cy - lastTrackPos.y);
+                            lastTrackPos = { x: cx, y: cy };
+
+                            if (jitter < 26) {
+                                // Mắt đang được giữ yên định vị
+                                stableLockFrames++;
+                                const lockPercent = Math.min(100, Math.round((stableLockFrames / REQUIRED_STABLE_FRAMES) * 100));
+
+                                if (irisHUD) {
+                                    irisHUD.setState('LOCKING');
+                                    irisHUD.setLockProgress(lockPercent / 100);
+                                }
+
+                                if (statusText && !isVerifying) {
+                                    statusText.innerHTML = `<i class="fas fa-bullseye text-warning me-1"></i> [PHÁT HIỆN NGƯỜI] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên khuôn mặt)...`;
+                                }
+
+                                // KHI ĐẠT ĐỘ ỔN ĐỊNH 100% -> KÍCH HOẠT QUÉT ĐÚNG 1 LẦN DUY NHẤT
+                                if (lockPercent >= 100 && autoScanSwitch.checked && !isVerifying) {
+                                    hasScannedCurrentPerson = true;
+                                    presenceState = 'SCANNED_WAIT_LEAVE';
+                                    captureAndVerify();
+                                }
+                            } else {
+                                // Người dùng còn đang chuyển động hoặc đổi góc nhìn -> giảm tiến độ để tránh chụp nhòe
+                                stableLockFrames = Math.max(0, stableLockFrames - 2);
+                                const lockPercent = Math.min(100, Math.round((stableLockFrames / REQUIRED_STABLE_FRAMES) * 100));
+                                if (irisHUD) irisHUD.setLockProgress(lockPercent / 100);
+                                if (statusText && !isVerifying) {
+                                    statusText.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
+                                }
                             }
                         } else {
-                            if (irisHUD) irisHUD.setTarget(0, 0, 45, false);
+                            handleNoPersonDetected();
                         }
                     } else {
-                        if (irisHUD) irisHUD.setTarget(0, 0, 45, false);
+                        handleNoPersonDetected();
                     }
                 });
 
@@ -610,6 +681,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             }
         } catch (e) {
             console.warn("Tracking note:", e);
+        }
+    }
+
+    // Xử lý khi không có người trong tầm nhìn camera
+    function handleNoPersonDetected() {
+        consecutiveEmptyFrames++;
+        consecutivePresentFrames = 0;
+        stableLockFrames = 0;
+
+        if (irisHUD) {
+            irisHUD.setLockProgress(0);
+        }
+
+        // Khi khung hình trống > 20 frame (~1.0s không thấy ai trước camera)
+        // -> Xác nhận người cũ ĐÃ RỜI ĐI, sẵn sàng đón NGƯỜI MỚI!
+        if (consecutiveEmptyFrames > 20) {
+            hasScannedCurrentPerson = false;
+            presenceState = 'EMPTY';
+            cooldownUntil = 0;
+
+            if (presenceBadge) {
+                presenceBadge.className = 'badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25';
+                presenceBadge.innerHTML = '<i class="fas fa-radar me-1"></i> Chờ người';
+            }
+
+            if (irisHUD && !isVerifying) {
+                irisHUD.setTarget(0, 0, 45, false);
+                irisHUD.setState('STANDBY');
+            }
+
+            if (statusText && !isVerifying) {
+                statusText.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để quét)';
+            }
         }
     }
 
@@ -647,10 +751,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             const data = await response.json();
 
             if (data.status === 'success') {
+                cooldownUntil = Date.now() + 8000;
                 if (irisHUD) irisHUD.setState('SUCCESS');
                 statusText.innerHTML = `<i class="fas fa-check-circle text-success me-1"></i> Xin chào: ${data.user_name}`;
                 
-                if (autoScanInterval) clearInterval(autoScanInterval);
                 if (trackerTask) trackerTask.stop();
 
                 Swal.fire({
@@ -671,6 +775,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 });
 
             } else {
+                cooldownUntil = Date.now() + 3500;
                 if (data.spoof_detected) {
                     if (irisHUD) irisHUD.setState('SPOOF');
                     statusText.innerHTML = `<i class="fas fa-triangle-exclamation text-danger me-1"></i> ${data.message}`;
@@ -692,8 +797,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     statusText.innerHTML = `<i class="fas fa-times-circle text-danger me-1"></i> ${data.message || 'Chưa nhận diện được'}`;
                 }
                 setTimeout(() => {
-                    if (!isVerifying) {
-                        statusText.innerHTML = '<i class="fas fa-eye text-primary me-1"></i> Hãy nhìn tự nhiên vào camera...';
+                    if (!isVerifying && presenceState === 'EMPTY') {
+                        statusText.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để quét)';
                     }
                 }, 2500);
             }
@@ -709,6 +814,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     // 4. Sự kiện Quét Thủ Công
     btnScan.addEventListener('click', () => {
+        hasScannedCurrentPerson = true;
         captureAndVerify();
     });
 
@@ -719,24 +825,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
     });
 
-    // 6. Tự động Quét Dự Phòng Mỗi 4s
-    function setupFallbackAutoScan() {
-        if (autoScanInterval) clearInterval(autoScanInterval);
-        if (autoScanSwitch.checked) {
-            autoScanInterval = setInterval(() => {
-                const activeTab = document.querySelector('#loginTabs .nav-link.active');
-                if (activeTab && activeTab.id === 'iris-tab' && !isVerifying) {
-                    captureAndVerify();
-                }
-            }, 4000);
+    autoScanSwitch.addEventListener('change', () => {
+        if (!autoScanSwitch.checked) {
+            statusText.innerHTML = '<i class="fas fa-pause text-muted me-1"></i> Tự động quét đã TẮT. Bấm nút QUÉT MỐNG MẮT NGAY để quét thủ công.';
+            if (presenceBadge) {
+                presenceBadge.className = 'badge bg-secondary bg-opacity-10 text-secondary border';
+                presenceBadge.innerHTML = '<i class="fas fa-power-off me-1"></i> Tắt tự động';
+            }
+        } else {
+            statusText.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Đã bật radar. Chờ người tiếp cận...';
+            if (presenceBadge) {
+                presenceBadge.className = 'badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25';
+                presenceBadge.innerHTML = '<i class="fas fa-radar me-1"></i> Chờ người';
+            }
         }
-    }
-
-    autoScanSwitch.addEventListener('change', setupFallbackAutoScan);
+    });
 
     window.addEventListener('DOMContentLoaded', () => {
         initCamera();
-        setupFallbackAutoScan();
     });
 </script>
 </body>

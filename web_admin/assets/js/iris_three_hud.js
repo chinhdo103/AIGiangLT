@@ -301,6 +301,32 @@ class IrisThreeHUD {
         this.burstRing = new THREE.Mesh(burstGeo, this.burstMat);
         this.burstRing.visible = false;
         this.hudGroup.add(this.burstRing);
+
+        // 9. Vòng khóa tiêu cự tiến độ (Focus Lock Progress Ring)
+        const lockGeo = new THREE.RingGeometry(46, 50, 48);
+        this.lockProgressMat = new THREE.MeshBasicMaterial({
+            color: this.options.lockColor,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0
+        });
+        this.lockProgressRing = new THREE.Mesh(lockGeo, this.lockProgressMat);
+        this.lockProgressRing.visible = false;
+        this.hudGroup.add(this.lockProgressRing);
+    }
+
+    setLockProgress(progress) {
+        if (!this.lockProgressRing) return;
+        const p = Math.max(0, Math.min(1, progress));
+        if (p <= 0.03) {
+            this.lockProgressRing.visible = false;
+        } else {
+            this.lockProgressRing.visible = true;
+            // Thu nhỏ từ 1.35 xuống 1.0 khi tiến độ tăng lên 100%
+            const s = 1.35 - (p * 0.35);
+            this.lockProgressRing.scale.set(s, s, 1);
+            this.lockProgressMat.opacity = 0.3 + (p * 0.7);
+        }
     }
 
     setTarget(x, y, radius = 45, detected = true) {
@@ -313,13 +339,14 @@ class IrisThreeHUD {
             this.targetPos.y = (h / 2) - y;
             this.targetPos.radius = Math.max(30, Math.min(90, radius));
             this.targetPos.detected = true;
-            if (this.state === 'IDLE') {
-                this.setState('TRACKING');
+            if (this.state === 'IDLE' || this.state === 'STANDBY') {
+                this.setState('DETECTED');
             }
         } else {
             this.targetPos.detected = false;
-            if (this.state === 'TRACKING') {
-                this.setState('IDLE');
+            if (this.state === 'DETECTED' || this.state === 'LOCKING') {
+                this.setState('STANDBY');
+                this.setLockProgress(0);
             }
         }
     }
@@ -330,9 +357,20 @@ class IrisThreeHUD {
 
         let activeColor = this.options.primaryColor;
 
-        if (newState === 'TRACKING') {
-            activeColor = this.options.lockColor;
+        if (newState === 'STANDBY' || newState === 'IDLE') {
+            activeColor = this.options.primaryColor;
+            this.outerMat.opacity = 0.55;
+            this.corneaDome.visible = true;
+        } else if (newState === 'DETECTED') {
+            activeColor = 0x38bdf8; // Light Blue khi phát hiện người
+            this.outerMat.opacity = 0.85;
             this.playSound('lock');
+        } else if (newState === 'LOCKING') {
+            activeColor = this.options.lockColor; // Emerald Green khi giữ yên khóa nét
+            this.outerMat.opacity = 0.95;
+        } else if (newState === 'SCANNING') {
+            activeColor = 0x06b6d4; // Cyan sáng quét chùm tia
+            this.outerMat.opacity = 1.0;
         } else if (newState === 'SPOOF') {
             activeColor = this.options.spoofColor;
             this.playSound('spoof');
@@ -341,6 +379,10 @@ class IrisThreeHUD {
             activeColor = this.options.successColor;
             this.playSound('success');
             this.triggerSuccessBurst();
+        } else if (newState === 'COOLDOWN') {
+            activeColor = 0x0ea5e9; // Chờ người tiếp theo
+            this.outerMat.opacity = 0.5;
+            this.setLockProgress(0);
         } else {
             activeColor = this.options.primaryColor;
         }
@@ -467,3 +509,4 @@ class IrisThreeHUD {
 }
 
 window.IrisThreeHUD = IrisThreeHUD;
+

@@ -166,7 +166,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
 
                         <!-- Trạng thái nổi phía dưới -->
                         <div class="status-pill text-dark" id="kioskStatusPill">
-                            <i class="fas fa-eye text-primary me-1"></i> Hãy nhìn tự nhiên vào camera...
+                            <i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để mở cửa)
                         </div>
                     </div>
 
@@ -207,9 +207,9 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                             </div>
                         </div>
 
-                        <!-- Nút Bật/Tắt Tự Động Quét -->
-                        <button type="button" class="btn btn-cyber-primary w-100 py-3 mb-3 justify-content-center" id="btnToggleAuto" onclick="toggleAutoScan()">
-                            <i class="fas fa-play me-1"></i> 🟢 BẬT CHẾ ĐỘ TỰ ĐỘNG MỞ CỬA
+                        <!-- Nút Bật/Tắt Tự Động Quét Phát Hiện Người Tiếp Cận -->
+                        <button type="button" class="btn btn-cyber-danger w-100 py-3 mb-3 justify-content-center" id="btnToggleAuto" onclick="toggleAutoScan()" data-active="true">
+                            <i class="fas fa-radar me-1"></i> 🔴 ĐANG TỰ ĐỘNG PHÁT HIỆN NGƯỜI (BẤM ĐỂ TẮT)
                         </button>
 
                         <button type="button" class="btn btn-cyber-secondary w-100 py-2 justify-content-center" onclick="performScan()">
@@ -254,11 +254,20 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
     const btnToggle = document.getElementById('btnToggleAuto');
 
     let currentStream = null;
-    let autoInterval = null;
     let isScanning = false;
     let audioCtx = null;
     let trackerTask = null;
-    let lastScanTime = 0;
+    let isAutoPresenceActive = true;
+
+    // Quản lý Trạng thái Phát hiện Người & Khóa nét Kiosk (Smart Presence State Machine)
+    let presenceState = 'EMPTY';
+    let consecutiveEmptyFrames = 0;
+    let consecutivePresentFrames = 0;
+    let stableLockFrames = 0;
+    const REQUIRED_STABLE_FRAMES = 12; // ~500-600ms giữ ổn định mắt
+    let lastTrackPos = { x: 0, y: 0 };
+    let hasScannedCurrentPerson = false;
+    let cooldownUntil = 0;
 
     // Khởi tạo Three.js Biometric Hologram HUD
     let kioskHUD = null;
@@ -483,25 +492,76 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                                 overlayCtx.fillText(label, tagX + 8, tagY + 14);
                             });
 
+                            consecutiveEmptyFrames = 0;
+                            consecutivePresentFrames++;
+
+                            const primary = validEyes[0];
+                            const dispX = cw - (primary.x + primary.width);
+                            const cx = dispX + primary.width / 2;
+                            const cy = primary.y + primary.height / 2;
+
                             // Cập nhật mục tiêu cho Three.js 3D Hologram HUD
-                            if (kioskHUD && validEyes.length > 0) {
-                                const primary = validEyes[0];
-                                const dispX = cw - (primary.x + primary.width);
-                                const cx = dispX + primary.width / 2;
-                                const cy = primary.y + primary.height / 2;
+                            if (kioskHUD) {
                                 kioskHUD.setTarget(cx, cy, primary.width / 2, true);
                             }
 
                             const now = Date.now();
-                            if (btnToggle.getAttribute('data-active') === 'true' && !isScanning && (now - lastScanTime > 3200)) {
-                                lastScanTime = now;
-                                performScan();
+
+                            // 1. Nếu người này vừa mới được quét xong và chưa rời khỏi -> KHÔNG quét lặp lại!
+                            if (hasScannedCurrentPerson || now < cooldownUntil) {
+                                if (statusPill && !isScanning) {
+                                    statusPill.innerHTML = '<i class="fas fa-user-shield text-info me-1"></i> Đã xử lý phiên này. Vui lòng rời vị trí để tiếp tục phiên mới...';
+                                }
+                                if (kioskHUD && !isScanning) {
+                                    kioskHUD.setState('COOLDOWN');
+                                }
+                                return;
+                            }
+
+                            // 2. Người mới tiếp cận camera:
+                            if (presenceState === 'EMPTY') {
+                                presenceState = 'APPROACHING';
+                                if (kioskHUD) kioskHUD.setState('DETECTED');
+                            }
+
+                            // 3. Đo độ ổn định vị trí (Jitter Check: ΔX, ΔY < 26px)
+                            const jitter = Math.hypot(cx - lastTrackPos.x, cy - lastTrackPos.y);
+                            lastTrackPos = { x: cx, y: cy };
+
+                            if (jitter < 26) {
+                                // Mắt đang được giữ yên định vị
+                                stableLockFrames++;
+                                const lockPercent = Math.min(100, Math.round((stableLockFrames / REQUIRED_STABLE_FRAMES) * 100));
+
+                                if (kioskHUD) {
+                                    kioskHUD.setState('LOCKING');
+                                    kioskHUD.setLockProgress(lockPercent / 100);
+                                }
+
+                                if (statusPill && !isScanning) {
+                                    statusPill.innerHTML = `<i class="fas fa-bullseye text-warning me-1"></i> [PHÁT HIỆN NGƯỜI] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên mắt)...`;
+                                }
+
+                                // KHI ĐẠT ĐỘ ỔN ĐỊNH 100% -> KÍCH HOẠT QUÉT ĐÚNG 1 LẦN DUY NHẤT
+                                if (lockPercent >= 100 && isAutoPresenceActive && !isScanning) {
+                                    hasScannedCurrentPerson = true;
+                                    presenceState = 'SCANNED_WAIT_LEAVE';
+                                    performScan();
+                                }
+                            } else {
+                                // Người dùng đang di chuyển -> giảm tiến độ để tránh chụp nhòe
+                                stableLockFrames = Math.max(0, stableLockFrames - 2);
+                                const lockPercent = Math.min(100, Math.round((stableLockFrames / REQUIRED_STABLE_FRAMES) * 100));
+                                if (kioskHUD) kioskHUD.setLockProgress(lockPercent / 100);
+                                if (statusPill && !isScanning) {
+                                    statusPill.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
+                                }
                             }
                         } else {
-                            if (kioskHUD) kioskHUD.setTarget(0, 0, 45, false);
+                            handleKioskNoPerson();
                         }
                     } else {
-                        if (kioskHUD) kioskHUD.setTarget(0, 0, 45, false);
+                        handleKioskNoPerson();
                     }
                 });
 
@@ -509,6 +569,34 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                 trackerTask = tracking.track('#kioskVideo', eyeTracker);
             }
         } catch (e) {}
+    }
+
+    // Xử lý khi không có người trong tầm nhìn Kiosk
+    function handleKioskNoPerson() {
+        consecutiveEmptyFrames++;
+        consecutivePresentFrames = 0;
+        stableLockFrames = 0;
+
+        if (kioskHUD) {
+            kioskHUD.setLockProgress(0);
+        }
+
+        // Khi khung hình trống > 20 frame (~1.0s không thấy ai trước camera)
+        // -> Xác nhận người cũ ĐÃ RỜI ĐI, sẵn sàng đón NGƯỜI MỚI!
+        if (consecutiveEmptyFrames > 20) {
+            hasScannedCurrentPerson = false;
+            presenceState = 'EMPTY';
+            cooldownUntil = 0;
+
+            if (kioskHUD && !isScanning) {
+                kioskHUD.setTarget(0, 0, 45, false);
+                kioskHUD.setState('STANDBY');
+            }
+
+            if (statusPill && !isScanning) {
+                statusPill.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để mở cửa)';
+            }
+        }
     }
 
     async function performScan() {
@@ -536,6 +624,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
             const data = await resp.json();
 
             if (data.status === 'success' && data.door === 'UNLOCKED') {
+                cooldownUntil = Date.now() + 8000;
                 if (kioskHUD) kioskHUD.setState('SUCCESS');
                 playBeep('success');
                 doorBanner.className = 'door-status-banner door-status-unlocked';
@@ -544,19 +633,18 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                 doorSub.innerText = `Độ khớp: ${data.confidence}% • ${data.ai_message}`;
                 statusPill.innerHTML = `<i class="fas fa-circle-check text-success me-1"></i> Mở cửa thành công (${data.confidence}%)`;
 
-                if (autoInterval) clearInterval(autoInterval);
                 setTimeout(() => {
                     doorBanner.className = 'door-status-banner door-status-locked';
                     doorIcon.className = 'fas fa-door-closed fs-3';
                     doorTitle.innerText = `CỬA ĐANG ĐÓNG (LOCKED)`;
                     doorSub.innerText = `Nhìn vào camera để mở cửa`;
-                    statusPill.innerHTML = '<i class="fas fa-eye text-primary me-1"></i> Hãy nhìn tự nhiên vào camera...';
-                    if (btnToggle.getAttribute('data-active') === 'true') {
-                        autoInterval = setInterval(performScan, 3800);
+                    if (presenceState === 'EMPTY') {
+                        statusPill.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để mở cửa)';
                     }
                 }, 8000);
 
             } else {
+                cooldownUntil = Date.now() + 3500;
                 if (data.spoof_detected) {
                     if (kioskHUD) kioskHUD.setState('SPOOF');
                     playBeep('error');
@@ -576,8 +664,8 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                 }
 
                 setTimeout(() => {
-                    if (!isScanning) {
-                        statusPill.innerHTML = '<i class="fas fa-eye text-primary me-1"></i> Hãy nhìn tự nhiên vào camera...';
+                    if (!isScanning && presenceState === 'EMPTY') {
+                        statusPill.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để mở cửa)';
                     }
                 }, 2500);
             }
@@ -592,25 +680,22 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
     }
 
     function toggleAutoScan() {
-        if (autoInterval) {
-            clearInterval(autoInterval);
-            autoInterval = null;
+        isAutoPresenceActive = !isAutoPresenceActive;
+        if (!isAutoPresenceActive) {
             btnToggle.setAttribute('data-active', 'false');
-            btnToggle.innerHTML = '<i class="fas fa-play me-1"></i> 🟢 BẬT CHẾ ĐỘ TỰ ĐỘNG MỞ CỬA';
+            btnToggle.innerHTML = '<i class="fas fa-play me-1"></i> 🟢 BẬT TỰ ĐỘNG PHÁT HIỆN NGƯỜI TIẾP CẬN';
             btnToggle.className = 'btn btn-cyber-primary w-100 py-3 mb-3 justify-content-center';
-            statusPill.innerHTML = '<i class="fas fa-pause me-1"></i> Đã tạm dừng tự động';
+            statusPill.innerHTML = '<i class="fas fa-pause me-1"></i> Tự động quét đã TẮT (Dùng nút Quét Bằng Tay bên dưới)';
         } else {
             btnToggle.setAttribute('data-active', 'true');
-            btnToggle.innerHTML = '<i class="fas fa-pause me-1"></i> 🔴 ĐANG TỰ ĐỘNG MỞ CỬA (BẤM ĐỂ DỪNG)';
+            btnToggle.innerHTML = '<i class="fas fa-radar me-1"></i> 🔴 ĐANG TỰ ĐỘNG PHÁT HIỆN NGƯỜI (BẤM ĐỂ TẮT)';
             btnToggle.className = 'btn btn-cyber-danger w-100 py-3 mb-3 justify-content-center';
-            statusPill.innerHTML = '<i class="fas fa-wand-magic-sparkles text-primary me-1"></i> Đang tự động quét định kỳ...';
-            autoInterval = setInterval(performScan, 3800);
+            statusPill.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Đã bật radar. Chờ người tiếp cận...';
         }
     }
 
     window.addEventListener('DOMContentLoaded', () => {
         initKioskCamera();
-        toggleAutoScan();
     });
 </script>
 </body>
