@@ -390,19 +390,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         try {
             currentStream = await navigator.mediaDevices.getUserMedia(constraints);
             video.srcObject = currentStream;
-            video.onloadedmetadata = () => {
-                video.play();
-                if (video.videoWidth && video.videoHeight) {
-                    video.parentElement.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
-                }
-                startSmartEyeTracking();
-            };
-            statusText.innerHTML = '<i class="fas fa-eye text-primary me-1"></i> Camera đã kết nối • Hãy nhìn tự nhiên vào màn hình';
-            await populateCameraList();
+            
+            try {
+                await video.play();
+            } catch (pe) {
+                console.warn("Video play note:", pe);
+            }
+
+            if (video.videoWidth && video.videoHeight) {
+                video.parentElement.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+            }
+
+            statusText.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đang theo dõi mống mắt...';
             startSmartEyeTracking();
+            await populateCameraList();
         } catch (err) {
             console.error("Camera Error:", err);
-            statusText.innerHTML = '<i class="fas fa-triangle-exclamation text-danger me-1"></i> Không tìm thấy Camera • Hãy chọn ảnh bên dưới';
+            statusText.innerHTML = '<i class="fas fa-triangle-exclamation text-danger me-1"></i> Không tìm thấy Camera';
         }
     }
 
@@ -471,7 +475,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     // Phân tích thị giác máy tính dựa trên Độ biến thiên sắc độ & Micro-chuyển động (Nhận diện người 100%)
     function analyzeCameraFrame() {
-        if (!video || !video.videoWidth || video.paused || video.ended) {
+        if (!video || !video.videoWidth) {
             return { hasPerson: false, isSteady: false, eyePos: null };
         }
 
@@ -502,10 +506,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     motionDiff += Math.abs(lum - lastVisionLums[i / 4]);
                 }
 
-                // Dò tâm mắt/đồng tử tối nhất ở vùng 20% - 80% chiều rộng và 20% - 75% chiều cao
+                // Dò tâm mắt/đồng tử tối nhất ở vùng trung tâm (20% - 80% width, 20% - 80% height)
                 const px = (i / 4) % 160;
                 const py = Math.floor((i / 4) / 160);
-                if (px > 24 && px < 136 && py > 20 && py < 95) {
+                if (px > 24 && px < 136 && py > 20 && py < 96) {
                     if (lum < darkestLum) {
                         darkestLum = lum;
                         darkestX = px;
@@ -527,14 +531,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             const contrast = maxLum - minLum;
             const avgMotion = motionDiff / totalPixels;
 
-            // Nhận diện người 100%: Có chủ thể trước camera (độ tương phản khuôn mặt/mắt stdDev >= 12, contrast >= 25)
-            // và ánh sáng camera bình thường (không bị tối đen hoặc chói trắng toàn bộ)
-            const hasPerson = (stdDev >= 12 && contrast >= 25 && meanLum >= 15 && meanLum <= 245);
-            // Người dùng giữ yên tư thế nhìn thẳng vào màn hình (chuyển động ổn định < 6.8)
-            const isSteady = hasPerson && (avgMotion < 6.8);
+            // Xác định có chủ thể trước camera (stdDev >= 10, contrast >= 20, ánh sáng bình thường)
+            const hasPerson = (stdDev >= 10 && contrast >= 20 && meanLum >= 15 && meanLum <= 245);
+            const isSteady = hasPerson && (avgMotion < 7.5);
 
-            const cw = video.offsetWidth || 640;
-            const ch = video.offsetHeight || 480;
+            const cw = video.offsetWidth || video.clientWidth || video.videoWidth || 640;
+            const ch = video.offsetHeight || video.clientHeight || video.videoHeight || 480;
             const eyeX = (1 - (darkestX / 160)) * cw;
             const eyeY = (darkestY / 120) * ch;
 
@@ -567,7 +569,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         ctx.moveTo(dispX, dispY + cornerLen); ctx.lineTo(dispX, dispY); ctx.lineTo(dispX + cornerLen, dispY);
         ctx.moveTo(dispX + dispW - cornerLen, dispY); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + cornerLen);
         ctx.moveTo(dispX, dispY + dispH - cornerLen); ctx.lineTo(dispX, dispY + dispH); ctx.lineTo(dispX + cornerLen, dispY + dispH);
-        ctx.moveTo(dispX + dispW - cornerLen, dispY + dispH); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + dispH - cornerLen);
+        ctx.moveTo(dispX + dispW - cornerLen, dispY + dispH); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + cornerLen);
         ctx.stroke();
 
         // Tâm chữ thập
@@ -601,25 +603,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     // Khởi động Bộ đôi Nhận diện Mắt & Hiện diện Thông minh
     function startSmartEyeTracking() {
         try {
-            if (typeof tracking !== 'undefined' && !trackerTask) {
-                try {
-                    const tracker = new tracking.ObjectTracker(['face', 'eye']);
-                    tracker.setStepSize(1.7);
-                    tracker.setScaleFactor(1.18);
-                    tracker.setMinDimension(24);
-
-                    tracker.on('track', function(event) {
-                        if (event.data && event.data.length > 0) {
-                            latestTrackerEyes = { time: Date.now(), data: event.data };
-                        }
-                    });
-
-                    trackerTask = tracking.track('#webcam', tracker);
-                } catch (te) {}
-            }
-
             if (visionLoopTimer) clearInterval(visionLoopTimer);
-            visionLoopTimer = setInterval(processVisionFrame, 90);
+            visionLoopTimer = setInterval(processVisionFrame, 80);
         } catch (e) {
             console.warn("Tracking start error:", e);
         }
@@ -627,11 +612,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     // Xử lý từng khung hình thị giác máy tính
     function processVisionFrame() {
-        if (!video || !video.videoWidth || video.paused || video.ended) return;
+        if (!video || !video.videoWidth) return;
 
-        const cw = video.offsetWidth;
-        const ch = video.offsetHeight;
-        if (!cw || !ch) return;
+        const cw = video.offsetWidth || video.clientWidth || video.videoWidth || 640;
+        const ch = video.offsetHeight || video.clientHeight || video.videoHeight || 480;
 
         overlayCanvas.width = cw;
         overlayCanvas.height = ch;
@@ -640,62 +624,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         const vision = analyzeCameraFrame();
         const now = Date.now();
 
-        let hasTrackerBox = false;
-        let targetX = vision.eyePos ? vision.eyePos.x : cw / 2;
-        let targetY = vision.eyePos ? vision.eyePos.y : ch / 2;
-        let targetRadius = 42;
-
-        if (latestTrackerEyes && (now - latestTrackerEyes.time < 400)) {
-            const rawEyes = latestTrackerEyes.data.filter(r => r.width >= 24 && r.width < 180);
-            const rawFaces = latestTrackerEyes.data.filter(r => r.width >= 65);
-
-            let eyesToDraw = [];
-            if (rawEyes.length > 0) {
-                eyesToDraw = rawEyes.slice(0, 2);
-            } else if (rawFaces.length > 0) {
-                const f = rawFaces[0];
-                const eyeW = Math.round(f.width * 0.28);
-                const eyeH = Math.round(f.height * 0.24);
-                const eyeY = Math.round(f.y + f.height * 0.30);
-                eyesToDraw = [
-                    { x: Math.round(f.x + f.width * 0.18), y: eyeY, width: eyeW, height: eyeH },
-                    { x: Math.round(f.x + f.width * 0.54), y: eyeY, width: eyeW, height: eyeH }
-                ];
-            }
-
-            if (eyesToDraw.length > 0) {
-                hasTrackerBox = true;
-                eyesToDraw.sort((a, b) => a.x - b.x);
-                eyesToDraw.forEach((rect, idx) => {
-                    const dispX = cw - (rect.x + rect.width);
-                    const dispY = rect.y;
-                    const label = (eyesToDraw.length === 2) ? (idx === 0 ? 'MẮT PHẢI' : 'MẮT TRÁI') : 'KHÓA NÉT MẮT';
-                    drawCyberReticle(overlayCtx, dispX, dispY, rect.width, rect.height, label);
-                });
-
-                const primary = eyesToDraw[0];
-                targetX = cw - (primary.x + primary.width / 2);
-                targetY = primary.y + primary.height / 2;
-                targetRadius = primary.width / 2;
-            }
-        }
-
-        const isPresent = vision.hasPerson || hasTrackerBox;
-
-        if (isPresent) {
+        if (vision.hasPerson) {
             consecutiveEmptyFrames = 0;
             consecutivePresentFrames++;
 
-            if (!hasTrackerBox && vision.eyePos) {
-                const boxW = Math.round(cw * 0.24);
-                const boxH = Math.round(ch * 0.26);
-                const dispX = Math.max(10, Math.min(cw - boxW - 10, vision.eyePos.x - boxW / 2));
-                const dispY = Math.max(10, Math.min(ch - boxH - 10, vision.eyePos.y - boxH / 2));
-                drawCyberReticle(overlayCtx, dispX, dispY, boxW, boxH, 'KHÓA NÉT MẮT');
-                targetX = vision.eyePos.x;
-                targetY = vision.eyePos.y;
-                targetRadius = boxW / 2;
-            }
+            const boxW = Math.round(cw * 0.24);
+            const boxH = Math.round(ch * 0.26);
+            const dispX = Math.max(10, Math.min(cw - boxW - 10, vision.eyePos.x - boxW / 2));
+            const dispY = Math.max(10, Math.min(ch - boxH - 10, vision.eyePos.y - boxH / 2));
+
+            drawCyberReticle(overlayCtx, dispX, dispY, boxW, boxH, 'KHÓA NÉT MẮT');
+            const targetX = vision.eyePos.x;
+            const targetY = vision.eyePos.y;
+            const targetRadius = boxW / 2;
 
             // Cập nhật Three.js 3D Hologram HUD bám theo mắt
             if (irisHUD) {
@@ -722,7 +663,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             const jitter = Math.hypot(targetX - lastTrackPos.x, targetY - lastTrackPos.y);
             lastTrackPos = { x: targetX, y: targetY };
 
-            if (jitter < 45 || vision.isSteady) {
+            if (jitter < 50 || vision.isSteady) {
                 stableLockFrames++;
                 const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
 
@@ -737,7 +678,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
                 // ĐẠT 100% -> TỰ ĐỘNG CHỤP VÀ QUÉT NGAY!
                 if (lockPercent >= 100 && autoScanSwitch.checked && !isVerifying) {
-                    cooldownUntil = now + 3500;
+                    cooldownUntil = now + 4000;
                     stableLockFrames = 0;
                     captureAndVerify();
                 }
