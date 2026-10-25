@@ -253,7 +253,21 @@ async def verify_iris(file: UploadFile = File(...)):
     if image is None:
         return JSONResponse({"match": False, "confidence": 0.0, "message": "File ảnh hỏng hoặc không đúng định dạng", "door_status": "LOCKED"})
         
-    # LỚP 1: LIVENESS & ANTI-SPOOFING CHECK (QUANG HỌC GIÁC MẠC 3D, MOIRÉ FFT & CHỐNG ẢNH CHỤP)
+    # LỚP 1: BÓC TÁCH MẮT & KIỂM ĐỊNH MẮT MỞ THỰC TẾ (CHỐNG NHẮM MẮT / CHE MẮT / PHÒNG TRỐNG)
+    t_start = time.time()
+    all_eyes = segmenter.segment_all(image)
+    seg_time = round((time.time() - t_start) * 1000, 2)
+    
+    if len(all_eyes) == 0:
+        return JSONResponse({
+            "match": False, 
+            "confidence": 0.0, 
+            "message": "Không tìm thấy mắt mở thực tế (Mắt đang nhắm lại, bị che hoặc không có người)", 
+            "spoof_detected": False,
+            "door_status": "LOCKED"
+        })
+        
+    # LỚP 2: LIVENESS & ANTI-SPOOFING CHECK (CHỈ CHẠY KHI ĐÃ CÓ MẮT THẬT)
     t_live = time.time()
     liveness_check = ai_assistant.check_eye_liveness_and_quality(image)
     liveness_time = round((time.time() - t_live) * 1000, 2)
@@ -275,19 +289,6 @@ async def verify_iris(file: UploadFile = File(...)):
                     "spoof_type": liveness_check.get('spoof_type')
                 }
             }
-        })
-        
-    # LỚP 2: BÓC TÁCH MẮT & TRÍCH XUẤT ĐẶC TRƯNG
-    t_start = time.time()
-    all_eyes = segmenter.segment_all(image)
-    seg_time = round((time.time() - t_start) * 1000, 2)
-    
-    if len(all_eyes) == 0:
-        return JSONResponse({
-            "match": False, 
-            "confidence": 0.0, 
-            "message": "Không tìm thấy mắt thực tế (Mắt đang bị che, nhắm lại hoặc không nhìn thẳng)", 
-            "door_status": "LOCKED"
         })
         
     best_candidate_id = None

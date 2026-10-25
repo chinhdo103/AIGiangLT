@@ -410,17 +410,23 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
             let motionDiff = 0;
             let minLum = 255;
             let maxLum = 0;
+            let skinPixels = 0;
 
             let darkestLum = 255;
             let darkestX = 80;
             let darkestY = 60;
 
             for (let i = 0; i < data.length; i += 4) {
-                const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                const r = data[i], g = data[i + 1], b = data[i + 2];
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
                 sumLum += lum;
                 sumSqLum += lum * lum;
                 if (lum < minLum) minLum = lum;
                 if (lum > maxLum) maxLum = lum;
+
+                if (r > 48 && g > 34 && b > 24 && (r - b) >= 4 && (Math.max(r, g, b) - Math.min(r, g, b)) >= 10) {
+                    skinPixels++;
+                }
 
                 if (lastVisionLums) {
                     motionDiff += Math.abs(lum - lastVisionLums[i / 4]);
@@ -428,7 +434,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
 
                 const px = (i / 4) % 160;
                 const py = Math.floor((i / 4) / 160);
-                if (px > 24 && px < 136 && py > 20 && py < 96) {
+                if (px > 24 && px < 136 && py > 24 && py < 92) {
                     if (lum < darkestLum) {
                         darkestLum = lum;
                         darkestX = px;
@@ -449,9 +455,12 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
             const stdDev = Math.sqrt(Math.max(0, variance));
             const contrast = maxLum - minLum;
             const avgMotion = motionDiff / totalPixels;
+            const skinRatio = skinPixels / totalPixels;
 
-            const hasPerson = (stdDev >= 10 && contrast >= 20 && meanLum >= 15 && meanLum <= 245);
-            const isSteady = hasPerson && (avgMotion < 7.5);
+            const hasPerson = ((skinRatio >= 0.05 || (darkestLum <= 100 && (meanLum - darkestLum) >= 28)) &&
+                               stdDev >= 12 && contrast >= 28 && meanLum >= 25 && meanLum <= 235);
+
+            const isSteady = hasPerson && (avgMotion < 6.0);
 
             const cw = video.offsetWidth || video.clientWidth || video.videoWidth || 640;
             const ch = video.offsetHeight || video.clientHeight || video.videoHeight || 480;
@@ -463,6 +472,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                 isSteady,
                 avgMotion,
                 stdDev,
+                skinRatio,
                 eyePos: { x: eyeX, y: eyeY }
             };
         } catch (e) {
@@ -574,7 +584,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
 
                 if (jitter < 55 || vision.isSteady) {
                     stableLockFrames++;
-                    const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
+                    const lockPercent = Math.min(100, Math.round((stableLockFrames / 7) * 100));
 
                     if (kioskHUD) {
                         kioskHUD.setState('LOCKING');
@@ -592,7 +602,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                     }
                 } else {
                     stableLockFrames = Math.max(0, stableLockFrames - 1);
-                    const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
+                    const lockPercent = Math.min(100, Math.round((stableLockFrames / 7) * 100));
                     if (kioskHUD) kioskHUD.setLockProgress(lockPercent / 100);
                     if (statusPill && !isScanning) {
                         statusPill.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';

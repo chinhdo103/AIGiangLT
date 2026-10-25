@@ -117,25 +117,60 @@ class IrisSegmenter:
     def validate_eye_structure(self, crop_enhanced):
         """
         Kiểm tra cấu trúc sinh trắc học thực sự của mắt (Biological Eye Verification):
-        1. Phải có đồng tử tối màu ở vùng trung tâm (min_val < 80).
-        2. Phải có độ tương phản giữa đồng tử và vùng xung quanh (củng mạc/mống mắt).
-        Loại bỏ tuyệt đối bàn tay, ngón tay, nếp nhăn hoặc bề mặt da đồng nhất.
+        1. Phải mở mắt thực sự (Đồng tử hình tròn/ovan mở, không bị mí mắt khép lại thành vệt rãnh ngang).
+        2. Phải có củng mạc (lòng trắng mắt) ở 2 bên đồng tử.
+        3. Loại bỏ tuyệt đối: Nhắm mắt, bàn tay che, ngón tay hoặc vật thể phẳng.
         """
         h, w = crop_enhanced.shape
         cy1, cy2 = int(h * 0.20), int(h * 0.80)
         cx1, cx2 = int(w * 0.20), int(w * 0.80)
         center = crop_enhanced[cy1:cy2, cx1:cx2]
 
-        min_val, _, _, _ = cv2.minMaxLoc(center)
+        min_val, max_val, min_loc, _ = cv2.minMaxLoc(center)
 
-        outer_left = crop_enhanced[int(h*0.20):int(h*0.80), :int(w*0.25)]
-        outer_right = crop_enhanced[int(h*0.20):int(h*0.80), int(w*0.75):]
-        outer_mean = (np.mean(outer_left) + np.mean(outer_right)) / 2.0
-
-        # Mắt người thật: Đồng tử tối < 80, vùng xung quanh sáng hơn ít nhất 14 đơn vị
-        if min_val > 80:
+        # 1. Đồng tử mở phải có điểm tối rõ rệt và độ tương phản với vùng xung quanh
+        if min_val > 90 or (max_val - min_val) < 28:
             return False
-        if (outer_mean - min_val) < 14:
+
+        # 2. KIỂM ĐỊNH MẮT MỞ (CHỐNG NHẮM MẮT / CHE MẮT)
+        thresh_val = min(min_val + 35, 95)
+        _, dark_mask = cv2.threshold(center, thresh_val, 255, cv2.THRESH_BINARY_INV)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_OPEN, kernel)
+
+        contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return False
+
+        best_cnt = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(best_cnt)
+        if area < 75:  # Vùng đồng tử quá nhỏ hoặc không mở
+            return False
+
+        # Tỷ lệ chiều cao / chiều rộng của vùng tối
+        bx, by, bw, bh = cv2.boundingRect(best_cnt)
+        aspect_ratio = float(bh) / max(1, bw)
+
+        # KHI NHẮM MẮT: Mí mắt khép lại tạo thành một vệt dẹt ngang hẹp (aspect_ratio < 0.38)
+        # KHI MỞ MẮT: Đồng tử có hình tròn mở tự nhiên (aspect_ratio >= 0.42)
+        if aspect_ratio < 0.40:
+            return False
+
+        # Tính độ tròn của đồng tử (Circularity)
+        perimeter = cv2.arcLength(best_cnt, True)
+        if perimeter > 0:
+            circularity = (4 * np.pi * area) / (perimeter * perimeter)
+            if circularity < 0.22:  # Quá dẹt hoặc méo mó không phải đồng tử
+                return False
+
+        # 3. KIỂM ĐỊNH CỦNG MẠC (LÒNG TRẮNG MẮT - SCLERA)
+        # Mắt mở thật luôn có củng mạc sáng ở 2 bên đồng tử
+        outer_left = crop_enhanced[int(h*0.30):int(h*0.70), :int(w*0.25)]
+        outer_right = crop_enhanced[int(h*0.30):int(h*0.70), int(w*0.75):]
+        sclera_mean = (np.mean(outer_left) + np.mean(outer_right)) / 2.0
+
+        # Nếu che mắt hoặc da phẳng (nhắm mắt), lòng trắng sẽ biến mất
+        if (sclera_mean - min_val) < 20:
             return False
 
         return True

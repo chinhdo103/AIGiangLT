@@ -490,26 +490,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             let motionDiff = 0;
             let minLum = 255;
             let maxLum = 0;
+            let skinPixels = 0;
 
             let darkestLum = 255;
             let darkestX = 80;
             let darkestY = 60;
 
             for (let i = 0; i < data.length; i += 4) {
-                const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                const r = data[i], g = data[i + 1], b = data[i + 2];
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
                 sumLum += lum;
                 sumSqLum += lum * lum;
                 if (lum < minLum) minLum = lum;
                 if (lum > maxLum) maxLum = lum;
 
+                // Tông da người thật (Chống quét phòng trống / tường trắng)
+                if (r > 48 && g > 34 && b > 24 && (r - b) >= 4 && (Math.max(r, g, b) - Math.min(r, g, b)) >= 10) {
+                    skinPixels++;
+                }
+
                 if (lastVisionLums) {
                     motionDiff += Math.abs(lum - lastVisionLums[i / 4]);
                 }
 
-                // Dò tâm mắt/đồng tử tối nhất ở vùng trung tâm (20% - 80% width, 20% - 80% height)
+                // Dò tâm mắt/đồng tử tối nhất ở vùng trung tâm (20% - 80% width, 25% - 75% height)
                 const px = (i / 4) % 160;
                 const py = Math.floor((i / 4) / 160);
-                if (px > 24 && px < 136 && py > 20 && py < 96) {
+                if (px > 24 && px < 136 && py > 24 && py < 92) {
                     if (lum < darkestLum) {
                         darkestLum = lum;
                         darkestX = px;
@@ -530,10 +537,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             const stdDev = Math.sqrt(Math.max(0, variance));
             const contrast = maxLum - minLum;
             const avgMotion = motionDiff / totalPixels;
+            const skinRatio = skinPixels / totalPixels;
 
-            // Xác định có chủ thể trước camera (stdDev >= 10, contrast >= 20, ánh sáng bình thường)
-            const hasPerson = (stdDev >= 10 && contrast >= 20 && meanLum >= 15 && meanLum <= 245);
-            const isSteady = hasPerson && (avgMotion < 7.5);
+            // ĐIỀU KIỆN CÓ NGƯỜI THỰC SỰ TRƯỚC CAMERA (LOẠI BỎ HOÀN TOÀN PHÒNG TRỐNG / TƯỜNG TRẮNG):
+            // 1. Phải có sắc tố da người >= 5% HOẶC có đồng tử tương phản đậm rõ rệt (meanLum - darkestLum >= 30)
+            // 2. Độ tương phản toàn khung hình contrast >= 28, chi tiết khuôn mặt stdDev >= 12
+            // 3. Ánh sáng đủ nhìn rõ (25 <= meanLum <= 235)
+            const hasPerson = ((skinRatio >= 0.05 || (darkestLum <= 100 && (meanLum - darkestLum) >= 28)) &&
+                               stdDev >= 12 && contrast >= 28 && meanLum >= 25 && meanLum <= 235);
+
+            // Mắt giữ yên ổn định nhìn thẳng (< 6.0)
+            const isSteady = hasPerson && (avgMotion < 6.0);
 
             const cw = video.offsetWidth || video.clientWidth || video.videoWidth || 640;
             const ch = video.offsetHeight || video.clientHeight || video.videoHeight || 480;
@@ -545,6 +559,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 isSteady,
                 avgMotion,
                 stdDev,
+                skinRatio,
                 eyePos: { x: eyeX, y: eyeY }
             };
         } catch (e) {
@@ -552,7 +567,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
     }
 
-    // Vẽ khung ngắm Neon Lục Bảo sắc nét quanh mắt
     function drawCyberReticle(ctx, dispX, dispY, dispW, dispH, label) {
         try {
             const cornerLen = Math.max(10, Math.min(20, dispW * 0.25));
@@ -666,7 +680,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
                 if (jitter < 55 || vision.isSteady) {
                     stableLockFrames++;
-                    const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
+                    const lockPercent = Math.min(100, Math.round((stableLockFrames / 7) * 100));
 
                     if (irisHUD) {
                         irisHUD.setState('LOCKING');
@@ -684,7 +698,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     }
                 } else {
                     stableLockFrames = Math.max(0, stableLockFrames - 1);
-                    const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
+                    const lockPercent = Math.min(100, Math.round((stableLockFrames / 7) * 100));
                     if (irisHUD) irisHUD.setLockProgress(lockPercent / 100);
                     if (statusText && !isVerifying) {
                         statusText.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
