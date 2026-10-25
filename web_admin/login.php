@@ -554,53 +554,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     // Vẽ khung ngắm Neon Lục Bảo sắc nét quanh mắt
     function drawCyberReticle(ctx, dispX, dispY, dispW, dispH, label) {
-        const cornerLen = Math.max(10, Math.min(20, dispW * 0.25));
-        const cx = dispX + dispW / 2;
-        const cy = dispY + dispH / 2;
+        try {
+            const cornerLen = Math.max(10, Math.min(20, dispW * 0.25));
+            const cx = dispX + dispW / 2;
+            const cy = dispY + dispH / 2;
 
-        ctx.shadowColor = 'rgba(16, 185, 129, 0.9)';
-        ctx.shadowBlur = 8;
-        ctx.strokeStyle = '#10b981';
-        ctx.lineWidth = 2.2;
-        ctx.lineCap = 'round';
+            ctx.shadowColor = 'rgba(16, 185, 129, 0.9)';
+            ctx.shadowBlur = 8;
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2.2;
+            ctx.lineCap = 'round';
 
-        // 4 Góc
-        ctx.beginPath();
-        ctx.moveTo(dispX, dispY + cornerLen); ctx.lineTo(dispX, dispY); ctx.lineTo(dispX + cornerLen, dispY);
-        ctx.moveTo(dispX + dispW - cornerLen, dispY); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + cornerLen);
-        ctx.moveTo(dispX, dispY + dispH - cornerLen); ctx.lineTo(dispX, dispY + dispH); ctx.lineTo(dispX + cornerLen, dispY + dispH);
-        ctx.moveTo(dispX + dispW - cornerLen, dispY + dispH); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + cornerLen);
-        ctx.stroke();
+            // 4 Góc ngắm
+            ctx.beginPath();
+            ctx.moveTo(dispX, dispY + cornerLen); ctx.lineTo(dispX, dispY); ctx.lineTo(dispX + cornerLen, dispY);
+            ctx.moveTo(dispX + dispW - cornerLen, dispY); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + cornerLen);
+            ctx.moveTo(dispX, dispY + dispH - cornerLen); ctx.lineTo(dispX, dispY + dispH); ctx.lineTo(dispX + cornerLen, dispY + dispH);
+            ctx.moveTo(dispX + dispW - cornerLen, dispY + dispH); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + cornerLen);
+            ctx.stroke();
 
-        // Tâm chữ thập
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = 'rgba(52, 211, 153, 0.9)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(cx - 5, cy); ctx.lineTo(cx + 5, cy);
-        ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5);
-        ctx.stroke();
+            // Tâm chữ thập
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = 'rgba(52, 211, 153, 0.9)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(cx - 5, cy); ctx.lineTo(cx + 5, cy);
+            ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5);
+            ctx.stroke();
 
-        // Nhãn
-        ctx.font = 'bold 11px system-ui, sans-serif';
-        const tagW = ctx.measureText(label).width + 14;
-        const tagH = 18;
-        const tagX = Math.max(4, Math.min(ctx.canvas.width - tagW - 4, dispX + (dispW - tagW) / 2));
-        const tagY = dispY > 24 ? dispY - 22 : dispY + dispH + 6;
+            // Nhãn (Sử dụng rect chuẩn, an toàn tuyệt đối trên mọi trình duyệt)
+            ctx.font = 'bold 11px system-ui, sans-serif';
+            const tagW = ctx.measureText(label).width + 14;
+            const tagH = 18;
+            const tagX = Math.max(4, Math.min(ctx.canvas.width - tagW - 4, dispX + (dispW - tagW) / 2));
+            const tagY = dispY > 24 ? dispY - 22 : dispY + dispH + 6;
 
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-        ctx.beginPath();
-        ctx.roundRect(tagX, tagY, tagW, tagH, 4);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(16, 185, 129, 0.6)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+            ctx.beginPath();
+            ctx.rect(tagX, tagY, tagW, tagH);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(16, 185, 129, 0.6)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
 
-        ctx.fillStyle = '#34d399';
-        ctx.fillText(label, tagX + 7, tagY + 13);
+            ctx.fillStyle = '#34d399';
+            ctx.fillText(label, tagX + 7, tagY + 13);
+        } catch (e) {
+            console.error("Reticle error:", e);
+        }
     }
 
-    // Khởi động Bộ đôi Nhận diện Mắt & Hiện diện Thông minh
     function startSmartEyeTracking() {
         try {
             if (visionLoopTimer) clearInterval(visionLoopTimer);
@@ -612,113 +615,111 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     // Xử lý từng khung hình thị giác máy tính
     function processVisionFrame() {
-        if (!video || !video.videoWidth) return;
+        try {
+            if (!video || !video.videoWidth) return;
 
-        const cw = video.offsetWidth || video.clientWidth || video.videoWidth || 640;
-        const ch = video.offsetHeight || video.clientHeight || video.videoHeight || 480;
+            const cw = video.offsetWidth || video.clientWidth || video.videoWidth || 640;
+            const ch = video.offsetHeight || video.clientHeight || video.videoHeight || 480;
 
-        overlayCanvas.width = cw;
-        overlayCanvas.height = ch;
-        overlayCtx.clearRect(0, 0, cw, ch);
+            overlayCanvas.width = cw;
+            overlayCanvas.height = ch;
+            overlayCtx.clearRect(0, 0, cw, ch);
 
-        const vision = analyzeCameraFrame();
-        const now = Date.now();
+            const vision = analyzeCameraFrame();
+            const now = Date.now();
 
-        if (vision.hasPerson) {
-            consecutiveEmptyFrames = 0;
-            consecutivePresentFrames++;
+            if (vision.hasPerson) {
+                consecutiveEmptyFrames = 0;
+                consecutivePresentFrames++;
 
-            const boxW = Math.round(cw * 0.24);
-            const boxH = Math.round(ch * 0.26);
-            const dispX = Math.max(10, Math.min(cw - boxW - 10, vision.eyePos.x - boxW / 2));
-            const dispY = Math.max(10, Math.min(ch - boxH - 10, vision.eyePos.y - boxH / 2));
+                const boxW = Math.round(cw * 0.24);
+                const boxH = Math.round(ch * 0.26);
+                const dispX = Math.max(10, Math.min(cw - boxW - 10, vision.eyePos.x - boxW / 2));
+                const dispY = Math.max(10, Math.min(ch - boxH - 10, vision.eyePos.y - boxH / 2));
 
-            drawCyberReticle(overlayCtx, dispX, dispY, boxW, boxH, 'KHÓA NÉT MẮT');
-            const targetX = vision.eyePos.x;
-            const targetY = vision.eyePos.y;
-            const targetRadius = boxW / 2;
-
-            // Cập nhật Three.js 3D Hologram HUD bám theo mắt
-            if (irisHUD) {
-                irisHUD.setTarget(targetX, targetY, targetRadius, true);
-            }
-
-            // Cập nhật Badge Có người
-            if (presenceBadge) {
-                presenceBadge.className = 'badge bg-success bg-opacity-10 text-success border border-success border-opacity-25';
-                presenceBadge.innerHTML = '<i class="fas fa-user-check me-1"></i> Có người';
-            }
-
-            // Cooldown sau lượt quét trước
-            if (now < cooldownUntil) {
-                if (statusText && !isVerifying) {
-                    statusText.innerHTML = '<i class="fas fa-clock text-info me-1"></i> Đang chuẩn bị phiên tiếp theo...';
-                }
-                if (irisHUD && !isVerifying) {
-                    irisHUD.setState('COOLDOWN');
-                }
-                return;
-            }
-
-            const jitter = Math.hypot(targetX - lastTrackPos.x, targetY - lastTrackPos.y);
-            lastTrackPos = { x: targetX, y: targetY };
-
-            if (jitter < 50 || vision.isSteady) {
-                stableLockFrames++;
-                const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
+                drawCyberReticle(overlayCtx, dispX, dispY, boxW, boxH, 'KHÓA NÉT MẮT');
+                const targetX = vision.eyePos.x;
+                const targetY = vision.eyePos.y;
+                const targetRadius = boxW / 2;
 
                 if (irisHUD) {
-                    irisHUD.setState('LOCKING');
-                    irisHUD.setLockProgress(lockPercent / 100);
+                    irisHUD.setTarget(targetX, targetY, targetRadius, true);
                 }
 
-                if (statusText && !isVerifying) {
-                    statusText.innerHTML = `<i class="fas fa-bullseye text-warning fa-spin me-1"></i> [ĐÃ THẤY MẮT] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên)...`;
+                if (presenceBadge) {
+                    presenceBadge.className = 'badge bg-success bg-opacity-10 text-success border border-success border-opacity-25';
+                    presenceBadge.innerHTML = '<i class="fas fa-user-check me-1"></i> Có người';
                 }
 
-                // ĐẠT 100% -> TỰ ĐỘNG CHỤP VÀ QUÉT NGAY!
-                if (lockPercent >= 100 && autoScanSwitch.checked && !isVerifying) {
-                    cooldownUntil = now + 4000;
-                    stableLockFrames = 0;
-                    captureAndVerify();
+                if (now < cooldownUntil) {
+                    if (statusText && !isVerifying) {
+                        statusText.innerHTML = '<i class="fas fa-clock text-info me-1"></i> Đang chuẩn bị phiên tiếp theo...';
+                    }
+                    if (irisHUD && !isVerifying) {
+                        irisHUD.setState('COOLDOWN');
+                    }
+                    return;
+                }
+
+                const jitter = Math.hypot(targetX - lastTrackPos.x, targetY - lastTrackPos.y);
+                lastTrackPos = { x: targetX, y: targetY };
+
+                if (jitter < 55 || vision.isSteady) {
+                    stableLockFrames++;
+                    const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
+
+                    if (irisHUD) {
+                        irisHUD.setState('LOCKING');
+                        irisHUD.setLockProgress(lockPercent / 100);
+                    }
+
+                    if (statusText && !isVerifying) {
+                        statusText.innerHTML = `<i class="fas fa-bullseye text-warning fa-spin me-1"></i> [ĐÃ THẤY MẮT] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên)...`;
+                    }
+
+                    if (lockPercent >= 100 && autoScanSwitch.checked && !isVerifying) {
+                        cooldownUntil = now + 4000;
+                        stableLockFrames = 0;
+                        captureAndVerify();
+                    }
+                } else {
+                    stableLockFrames = Math.max(0, stableLockFrames - 1);
+                    const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
+                    if (irisHUD) irisHUD.setLockProgress(lockPercent / 100);
+                    if (statusText && !isVerifying) {
+                        statusText.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
+                    }
                 }
             } else {
-                stableLockFrames = Math.max(0, stableLockFrames - 1);
-                const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
-                if (irisHUD) irisHUD.setLockProgress(lockPercent / 100);
-                if (statusText && !isVerifying) {
-                    statusText.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
+                consecutiveEmptyFrames++;
+                consecutivePresentFrames = 0;
+                stableLockFrames = 0;
+
+                if (irisHUD) {
+                    irisHUD.setLockProgress(0);
+                }
+
+                if (consecutiveEmptyFrames >= 5) {
+                    if (presenceBadge) {
+                        presenceBadge.className = 'badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25';
+                        presenceBadge.innerHTML = '<i class="fas fa-radar me-1"></i> Chờ người';
+                    }
+
+                    if (irisHUD && !isVerifying) {
+                        irisHUD.setTarget(0, 0, 42, false);
+                        irisHUD.setState('STANDBY');
+                    }
+
+                    if (statusText && !isVerifying) {
+                        statusText.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để quét)';
+                    }
                 }
             }
-        } else {
-            // Không có người trước camera
-            consecutiveEmptyFrames++;
-            consecutivePresentFrames = 0;
-            stableLockFrames = 0;
-
-            if (irisHUD) {
-                irisHUD.setLockProgress(0);
-            }
-
-            if (consecutiveEmptyFrames >= 5) {
-                if (presenceBadge) {
-                    presenceBadge.className = 'badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25';
-                    presenceBadge.innerHTML = '<i class="fas fa-radar me-1"></i> Chờ người';
-                }
-
-                if (irisHUD && !isVerifying) {
-                    irisHUD.setTarget(0, 0, 42, false);
-                    irisHUD.setState('STANDBY');
-                }
-
-                if (statusText && !isVerifying) {
-                    statusText.innerHTML = '<i class="fas fa-user-clock text-secondary me-1"></i> Chờ người tiếp cận... (Đứng trước camera để quét)';
-                }
-            }
+        } catch (err) {
+            console.error("Frame process error:", err);
         }
     }
 
-    // 3. Chụp và gửi xác thực
     async function captureAndVerify(customBlob = null) {
         if (isVerifying) return;
         isVerifying = true;
