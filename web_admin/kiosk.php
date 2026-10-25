@@ -385,16 +385,16 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
         }
     }
 
-    // Bắt điểm mắt tự động trên Video (Tối ưu chính xác & không ngược chữ)
+    // Bắt điểm mắt & khuôn mặt tự động bằng Tracking.js (Dual Face & Eye Tracker)
     function startSmartEyeTracking() {
         try {
             if (typeof tracking !== 'undefined') {
-                const eyeTracker = new tracking.ObjectTracker('eye');
-                eyeTracker.setStepSize(1.8);
-                eyeTracker.setScaleFactor(1.18);
-                eyeTracker.setMinDimension(46);
+                const tracker = new tracking.ObjectTracker(['face', 'eye']);
+                tracker.setStepSize(1.6);
+                tracker.setScaleFactor(1.15);
+                tracker.setMinDimension(28); // Hỗ trợ cả mắt nhỏ và khoảng cách xa
 
-                eyeTracker.on('track', function(event) {
+                tracker.on('track', function(event) {
                     const cw = video.offsetWidth;
                     const ch = video.offsetHeight;
                     if (!cw || !ch) return;
@@ -404,20 +404,28 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                     overlayCtx.clearRect(0, 0, cw, ch);
 
                     if (event.data && event.data.length > 0) {
-                        let validEyes = event.data.filter(rect => {
-                            if (rect.width < 44 || rect.height < 40) return false;
-                            const ratio = rect.width / rect.height;
-                            if (ratio < 0.65 || ratio > 1.45) return false;
-                            if (rect.y < ch * 0.24 || rect.y > ch * 0.80) return false;
-                            if (!isBiologicalEyePatch(video, rect)) return false;
-                            return true;
-                        });
+                        const faces = event.data.filter(r => r.width >= 65);
+                        const rawEyes = event.data.filter(r => r.width >= 24 && r.width < 160);
 
-                        if (validEyes.length > 2) {
-                            validEyes.sort((a, b) => ((b.total || 1) * b.width) - ((a.total || 1) * a.width));
-                            validEyes = validEyes.slice(0, 2);
+                        let validEyes = [];
+
+                        if (rawEyes.length > 0) {
+                            validEyes = rawEyes;
+                        } else if (faces.length > 0) {
+                            const f = faces[0];
+                            const eyeW = Math.round(f.width * 0.28);
+                            const eyeH = Math.round(f.height * 0.24);
+                            const eyeY = Math.round(f.y + f.height * 0.30);
+                            validEyes = [
+                                { x: Math.round(f.x + f.width * 0.18), y: eyeY, width: eyeW, height: eyeH },
+                                { x: Math.round(f.x + f.width * 0.54), y: eyeY, width: eyeW, height: eyeH }
+                            ];
                         }
 
+                        if (validEyes.length > 2) {
+                            validEyes.sort((a, b) => b.width - a.width);
+                            validEyes = validEyes.slice(0, 2);
+                        }
                         validEyes.sort((a, b) => a.x - b.x);
 
                         if (validEyes.length > 0) {
@@ -428,9 +436,9 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                                 const dispH = rect.height;
                                 const cx = dispX + dispW / 2;
                                 const cy = dispY + dispH / 2;
-                                const cornerLen = Math.max(12, Math.min(22, dispW * 0.25));
+                                const cornerLen = Math.max(10, Math.min(22, dispW * 0.28));
 
-                                overlayCtx.shadowColor = 'rgba(16, 185, 129, 0.7)';
+                                overlayCtx.shadowColor = 'rgba(16, 185, 129, 0.8)';
                                 overlayCtx.shadowBlur = 8;
                                 overlayCtx.strokeStyle = '#10b981';
                                 overlayCtx.lineWidth = 2.5;
@@ -456,23 +464,21 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
 
                                 overlayCtx.beginPath();
                                 overlayCtx.moveTo(dispX + dispW - cornerLen, dispY + dispH);
-                                overlayCtx.lineTo(dispX + dispW);
+                                overlayCtx.lineTo(dispX + dispW, dispY + dispH);
                                 overlayCtx.lineTo(dispX + dispW, dispY + dispH - cornerLen);
                                 overlayCtx.stroke();
 
                                 overlayCtx.shadowBlur = 0;
-                                overlayCtx.strokeStyle = 'rgba(52, 211, 153, 0.75)';
+                                overlayCtx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
                                 overlayCtx.lineWidth = 1.5;
                                 overlayCtx.beginPath();
-                                overlayCtx.moveTo(cx - 6, cy);
-                                overlayCtx.lineTo(cx + 6, cy);
-                                overlayCtx.moveTo(cx, cy - 6);
-                                overlayCtx.lineTo(cx, cy + 6);
+                                overlayCtx.moveTo(cx - 5, cy); overlayCtx.lineTo(cx + 5, cy);
+                                overlayCtx.moveTo(cx, cy - 5); overlayCtx.lineTo(cx, cy + 5);
                                 overlayCtx.stroke();
 
                                 const label = (validEyes.length === 2)
-                                    ? (idx === 0 ? 'MẮT (PHẢI)' : 'MẮT (TRÁI)')
-                                    : 'ĐÃ ĐỊNH VỊ MẮT';
+                                    ? (idx === 0 ? 'MẮT PHẢI' : 'MẮT TRÁI')
+                                    : 'KHÓA NÉT MẮT';
 
                                 overlayCtx.font = 'bold 11px system-ui, -apple-system, sans-serif';
                                 const tagW = overlayCtx.measureText(label).width + 16;
@@ -500,17 +506,16 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                             const cx = dispX + primary.width / 2;
                             const cy = primary.y + primary.height / 2;
 
-                            // Cập nhật mục tiêu cho Three.js 3D Hologram HUD
                             if (kioskHUD) {
                                 kioskHUD.setTarget(cx, cy, primary.width / 2, true);
                             }
 
                             const now = Date.now();
 
-                            // 1. Nếu người này vừa mới được quét xong và chưa rời khỏi -> KHÔNG quét lặp lại!
-                            if (hasScannedCurrentPerson || now < cooldownUntil) {
+                            // Cooldown ngắn 2.8s sau lần quét trước
+                            if (now < cooldownUntil) {
                                 if (statusPill && !isScanning) {
-                                    statusPill.innerHTML = '<i class="fas fa-user-shield text-info me-1"></i> Đã xử lý phiên này. Vui lòng rời vị trí để tiếp tục phiên mới...';
+                                    statusPill.innerHTML = '<i class="fas fa-clock text-info me-1"></i> Đang chuẩn bị phiên tiếp theo...';
                                 }
                                 if (kioskHUD && !isScanning) {
                                     kioskHUD.setState('COOLDOWN');
@@ -518,20 +523,13 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                                 return;
                             }
 
-                            // 2. Người mới tiếp cận camera:
-                            if (presenceState === 'EMPTY') {
-                                presenceState = 'APPROACHING';
-                                if (kioskHUD) kioskHUD.setState('DETECTED');
-                            }
-
-                            // 3. Đo độ ổn định vị trí (Jitter Check: ΔX, ΔY < 26px)
+                            // Đo độ ổn định vị trí (Jitter Check: ΔX, ΔY < 38px)
                             const jitter = Math.hypot(cx - lastTrackPos.x, cy - lastTrackPos.y);
                             lastTrackPos = { x: cx, y: cy };
 
-                            if (jitter < 26) {
-                                // Mắt đang được giữ yên định vị
+                            if (jitter < 38) {
                                 stableLockFrames++;
-                                const lockPercent = Math.min(100, Math.round((stableLockFrames / REQUIRED_STABLE_FRAMES) * 100));
+                                const lockPercent = Math.min(100, Math.round((stableLockFrames / 5) * 100)); // 5 frames (~350ms) là đủ!
 
                                 if (kioskHUD) {
                                     kioskHUD.setState('LOCKING');
@@ -539,19 +537,17 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                                 }
 
                                 if (statusPill && !isScanning) {
-                                    statusPill.innerHTML = `<i class="fas fa-bullseye text-warning me-1"></i> [PHÁT HIỆN NGƯỜI] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên mắt)...`;
+                                    statusPill.innerHTML = `<i class="fas fa-bullseye text-warning fa-spin me-1"></i> [ĐÃ THẤY MẮT] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên khuôn mặt)...`;
                                 }
 
-                                // KHI ĐẠT ĐỘ ỔN ĐỊNH 100% -> KÍCH HOẠT QUÉT ĐÚNG 1 LẦN DUY NHẤT
                                 if (lockPercent >= 100 && isAutoPresenceActive && !isScanning) {
-                                    hasScannedCurrentPerson = true;
-                                    presenceState = 'SCANNED_WAIT_LEAVE';
+                                    cooldownUntil = now + 3200;
+                                    stableLockFrames = 0;
                                     performScan();
                                 }
                             } else {
-                                // Người dùng đang di chuyển -> giảm tiến độ để tránh chụp nhòe
-                                stableLockFrames = Math.max(0, stableLockFrames - 2);
-                                const lockPercent = Math.min(100, Math.round((stableLockFrames / REQUIRED_STABLE_FRAMES) * 100));
+                                stableLockFrames = Math.max(0, stableLockFrames - 1);
+                                const lockPercent = Math.min(100, Math.round((stableLockFrames / 5) * 100));
                                 if (kioskHUD) kioskHUD.setLockProgress(lockPercent / 100);
                                 if (statusPill && !isScanning) {
                                     statusPill.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
@@ -566,7 +562,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                 });
 
                 if (trackerTask) trackerTask.stop();
-                trackerTask = tracking.track('#kioskVideo', eyeTracker);
+                trackerTask = tracking.track('#kioskVideo', tracker);
             }
         } catch (e) {}
     }

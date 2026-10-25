@@ -467,16 +467,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
     }
 
-    // 2. Theo Dõi Mắt Thông Minh Trên Trình Duyệt (Smart Eye Tracking Overlay)
+    // 2. Theo Dõi Mắt & Khuôn Mặt Thông Minh Bằng Tracking.js (Dual Face & Eye Tracker)
     function startSmartEyeTracking() {
         try {
             if (typeof tracking !== 'undefined') {
-                const eyeTracker = new tracking.ObjectTracker('eye');
-                eyeTracker.setStepSize(1.8);
-                eyeTracker.setScaleFactor(1.18);
-                eyeTracker.setMinDimension(46);
+                // Sử dụng cả Face và Eye classifier để đảm bảo không bao giờ bị trượt mục tiêu
+                const tracker = new tracking.ObjectTracker(['face', 'eye']);
+                tracker.setStepSize(1.6);
+                tracker.setScaleFactor(1.15);
+                tracker.setMinDimension(28); // Hỗ trợ cả cự ly xa và gần
 
-                eyeTracker.on('track', function(event) {
+                tracker.on('track', function(event) {
                     const cw = video.offsetWidth;
                     const ch = video.offsetHeight;
                     if (!cw || !ch) return;
@@ -486,48 +487,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     overlayCtx.clearRect(0, 0, cw, ch);
 
                     if (event.data && event.data.length > 0) {
-                        // Lọc thông minh loại bỏ tóc, trán và nhiễu ngẫu nhiên
-                        let validEyes = event.data.filter(rect => {
-                            // 1. Kích thước tối thiểu: Mắt người webcam thường >= 44px
-                            if (rect.width < 44 || rect.height < 40) return false;
+                        const faces = event.data.filter(r => r.width >= 65);
+                        const rawEyes = event.data.filter(r => r.width >= 24 && r.width < 160);
 
-                            // 2. Tỷ lệ mắt xấp xỉ vuông/chữ nhật tự nhiên (0.65 đến 1.45)
-                            const ratio = rect.width / rect.height;
-                            if (ratio < 0.65 || ratio > 1.45) return false;
+                        let validEyes = [];
 
-                            // 3. Vùng trục Y: Mắt người nằm ở khoảng 24% - 80% chiều cao khung hình
-                            // Loại bỏ hoàn toàn vùng tóc và trán phía trên (< 24%)
-                            if (rect.y < ch * 0.24 || rect.y > ch * 0.80) return false;
-
-                            // 4. Kiểm định sinh trắc học điểm ảnh thực tế (Pupil/Sclera contrast)
-                            if (!isBiologicalEyePatch(video, rect)) return false;
-
-                            return true;
-                        });
-
-                        // Nếu phát hiện > 2 ứng viên, ưu tiên lấy 2 ứng viên có diện tích & điểm tin cậy cao nhất
-                        if (validEyes.length > 2) {
-                            validEyes.sort((a, b) => ((b.total || 1) * b.width) - ((a.total || 1) * a.width));
-                            validEyes = validEyes.slice(0, 2);
+                        if (rawEyes.length > 0) {
+                            // Ưu tiên dùng tọa độ mắt bóc tách trực tiếp
+                            validEyes = rawEyes;
+                        } else if (faces.length > 0) {
+                            // Khi ngồi xa hoặc mắt nhỏ, nội suy vùng mắt tự nhiên từ khuôn mặt
+                            const f = faces[0];
+                            const eyeW = Math.round(f.width * 0.28);
+                            const eyeH = Math.round(f.height * 0.24);
+                            const eyeY = Math.round(f.y + f.height * 0.30);
+                            validEyes = [
+                                { x: Math.round(f.x + f.width * 0.18), y: eyeY, width: eyeW, height: eyeH },
+                                { x: Math.round(f.x + f.width * 0.54), y: eyeY, width: eyeW, height: eyeH }
+                            ];
                         }
 
-                        // Sắp xếp từ trái sang phải theo video
+                        // Giới hạn tối đa 2 mắt
+                        if (validEyes.length > 2) {
+                            validEyes.sort((a, b) => b.width - a.width);
+                            validEyes = validEyes.slice(0, 2);
+                        }
                         validEyes.sort((a, b) => a.x - b.x);
 
                         if (validEyes.length > 0) {
                             validEyes.forEach((rect, idx) => {
-                                // Do video hiển thị qua gương (CSS transform: scaleX(-1)),
-                                // ta tính tọa độ hiển thị tương ứng trên Canvas không bị lật
                                 const dispX = cw - (rect.x + rect.width);
                                 const dispY = rect.y;
                                 const dispW = rect.width;
                                 const dispH = rect.height;
                                 const cx = dispX + dispW / 2;
                                 const cy = dispY + dispH / 2;
-                                const cornerLen = Math.max(12, Math.min(22, dispW * 0.25));
+                                const cornerLen = Math.max(10, Math.min(22, dispW * 0.28));
 
-                                // 1. Khung Autofocus dạng góc hiện đại [   ]
-                                overlayCtx.shadowColor = 'rgba(16, 185, 129, 0.7)';
+                                // 1. Khung ngắm Lục bảo Neon 4 góc
+                                overlayCtx.shadowColor = 'rgba(16, 185, 129, 0.8)';
                                 overlayCtx.shadowBlur = 8;
                                 overlayCtx.strokeStyle = '#10b981';
                                 overlayCtx.lineWidth = 2.5;
@@ -561,21 +559,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 overlayCtx.lineTo(dispX + dispW, dispY + dispH - cornerLen);
                                 overlayCtx.stroke();
 
-                                // 2. Tâm ngắm ngắm con ngươi (+)
+                                // 2. Tâm chữ thập (+)
                                 overlayCtx.shadowBlur = 0;
-                                overlayCtx.strokeStyle = 'rgba(52, 211, 153, 0.75)';
+                                overlayCtx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
                                 overlayCtx.lineWidth = 1.5;
                                 overlayCtx.beginPath();
-                                overlayCtx.moveTo(cx - 6, cy);
-                                overlayCtx.lineTo(cx + 6, cy);
-                                overlayCtx.moveTo(cx, cy - 6);
-                                overlayCtx.lineTo(cx, cy + 6);
+                                overlayCtx.moveTo(cx - 5, cy); overlayCtx.lineTo(cx + 5, cy);
+                                overlayCtx.moveTo(cx, cy - 5); overlayCtx.lineTo(cx, cy + 5);
                                 overlayCtx.stroke();
 
-                                // 3. Nhãn thông tin AI (Chữ xuôi tự nhiên, không bị ngược)
+                                // 3. Nhãn thông tin
                                 const label = (validEyes.length === 2)
-                                    ? (idx === 0 ? 'MẮT (PHẢI)' : 'MẮT (TRÁI)')
-                                    : 'ĐÃ ĐỊNH VỊ MẮT';
+                                    ? (idx === 0 ? 'MẮT PHẢI' : 'MẮT TRÁI')
+                                    : 'KHÓA NÉT MẮT';
 
                                 overlayCtx.font = 'bold 11px system-ui, -apple-system, sans-serif';
                                 const tagW = overlayCtx.measureText(label).width + 16;
@@ -583,7 +579,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 const tagX = Math.max(4, Math.min(cw - tagW - 4, dispX + (dispW - tagW) / 2));
                                 const tagY = dispY > 26 ? dispY - 24 : dispY + dispH + 6;
 
-                                // Nền tag kính mờ tối màu
                                 overlayCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
                                 overlayCtx.beginPath();
                                 overlayCtx.roundRect(tagX, tagY, tagW, tagH, 5);
@@ -592,7 +587,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 overlayCtx.lineWidth = 1;
                                 overlayCtx.stroke();
 
-                                // Chữ màu lục bảo sắc nét
                                 overlayCtx.fillStyle = '#34d399';
                                 overlayCtx.fillText(label, tagX + 8, tagY + 14);
                             });
@@ -618,10 +612,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 presenceBadge.innerHTML = '<i class="fas fa-user-check me-1"></i> Có người';
                             }
 
-                            // 1. Kiểm tra nếu người này đã vừa được quét xong và chưa rời khỏi tầm nhìn -> KHÔNG QUÉT LẠI
-                            if (hasScannedCurrentPerson || now < cooldownUntil) {
+                            // Cooldown ngắn 2.8s sau lần quét trước để tránh dồn dập
+                            if (now < cooldownUntil) {
                                 if (statusText && !isVerifying) {
-                                    statusText.innerHTML = '<i class="fas fa-user-shield text-info me-1"></i> Đã nhận diện phiên này. Vui lòng rời vị trí để tiếp tục phiên mới...';
+                                    statusText.innerHTML = '<i class="fas fa-clock text-info me-1"></i> Đang chuẩn bị phiên tiếp theo...';
                                 }
                                 if (irisHUD && !isVerifying) {
                                     irisHUD.setState('COOLDOWN');
@@ -629,20 +623,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 return;
                             }
 
-                            // 2. Nếu là người mới tiếp cận:
-                            if (presenceState === 'EMPTY') {
-                                presenceState = 'APPROACHING';
-                                if (irisHUD) irisHUD.setState('DETECTED');
-                            }
-
-                            // 3. Kiểm định độ ổn định vị trí (Jitter Check: ΔX, ΔY < 26px)
+                            // Kiểm định độ ổn định vị trí (Jitter Check: ΔX, ΔY < 38px)
                             const jitter = Math.hypot(cx - lastTrackPos.x, cy - lastTrackPos.y);
                             lastTrackPos = { x: cx, y: cy };
 
-                            if (jitter < 26) {
+                            if (jitter < 38) {
                                 // Mắt đang được giữ yên định vị
                                 stableLockFrames++;
-                                const lockPercent = Math.min(100, Math.round((stableLockFrames / REQUIRED_STABLE_FRAMES) * 100));
+                                const lockPercent = Math.min(100, Math.round((stableLockFrames / 5) * 100)); // 5 frames (~350ms) là đủ!
 
                                 if (irisHUD) {
                                     irisHUD.setState('LOCKING');
@@ -650,19 +638,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 }
 
                                 if (statusText && !isVerifying) {
-                                    statusText.innerHTML = `<i class="fas fa-bullseye text-warning me-1"></i> [PHÁT HIỆN NGƯỜI] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên khuôn mặt)...`;
+                                    statusText.innerHTML = `<i class="fas fa-bullseye text-warning fa-spin me-1"></i> [ĐÃ THẤY MẮT] Khóa nét: <strong>${lockPercent}%</strong> (Giữ yên khuôn mặt)...`;
                                 }
 
-                                // KHI ĐẠT ĐỘ ỔN ĐỊNH 100% -> KÍCH HOẠT QUÉT ĐÚNG 1 LẦN DUY NHẤT
+                                // KHI ĐẠT ĐỘ ỔN ĐỊNH 100% -> KÍCH HOẠT QUÉT NGAY!
                                 if (lockPercent >= 100 && autoScanSwitch.checked && !isVerifying) {
-                                    hasScannedCurrentPerson = true;
-                                    presenceState = 'SCANNED_WAIT_LEAVE';
+                                    cooldownUntil = now + 3200;
+                                    stableLockFrames = 0;
                                     captureAndVerify();
                                 }
                             } else {
-                                // Người dùng còn đang chuyển động hoặc đổi góc nhìn -> giảm tiến độ để tránh chụp nhòe
-                                stableLockFrames = Math.max(0, stableLockFrames - 2);
-                                const lockPercent = Math.min(100, Math.round((stableLockFrames / REQUIRED_STABLE_FRAMES) * 100));
+                                // Giảm nhẹ 1 frame nếu người dùng nhích nhẹ
+                                stableLockFrames = Math.max(0, stableLockFrames - 1);
+                                const lockPercent = Math.min(100, Math.round((stableLockFrames / 5) * 100));
                                 if (irisHUD) irisHUD.setLockProgress(lockPercent / 100);
                                 if (statusText && !isVerifying) {
                                     statusText.innerHTML = '<i class="fas fa-arrows-to-eye text-primary me-1"></i> Đã thấy mắt - Vui lòng nhìn thẳng và giữ yên...';
@@ -677,7 +665,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 });
 
                 if (trackerTask) trackerTask.stop();
-                trackerTask = tracking.track('#webcam', eyeTracker);
+                trackerTask = tracking.track('#webcam', tracker);
             }
         } catch (e) {
             console.warn("Tracking note:", e);
@@ -694,13 +682,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             irisHUD.setLockProgress(0);
         }
 
-        // Khi khung hình trống > 20 frame (~1.0s không thấy ai trước camera)
-        // -> Xác nhận người cũ ĐÃ RỜI ĐI, sẵn sàng đón NGƯỜI MỚI!
-        if (consecutiveEmptyFrames > 20) {
-            hasScannedCurrentPerson = false;
-            presenceState = 'EMPTY';
-            cooldownUntil = 0;
-
+        // Khi khung hình trống > 10 frames
+        if (consecutiveEmptyFrames > 10) {
             if (presenceBadge) {
                 presenceBadge.className = 'badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25';
                 presenceBadge.innerHTML = '<i class="fas fa-radar me-1"></i> Chờ người';
