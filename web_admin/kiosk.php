@@ -405,29 +405,22 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
             const data = imgData.data;
             const totalPixels = 160 * 120;
 
+            let sumLum = 0;
+            let sumSqLum = 0;
             let motionDiff = 0;
-            let skinPixels = 0;
             let minLum = 255;
             let maxLum = 0;
-            let sumLum = 0;
 
             let darkestLum = 255;
             let darkestX = 80;
             let darkestY = 60;
 
             for (let i = 0; i < data.length; i += 4) {
-                const r = data[i];
-                const g = data[i + 1];
-                const b = data[i + 2];
-                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-
+                const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
                 sumLum += lum;
+                sumSqLum += lum * lum;
                 if (lum < minLum) minLum = lum;
                 if (lum > maxLum) maxLum = lum;
-
-                if (r > 48 && g > 32 && b > 20 && r > b && (r - g) > 4 && (Math.max(r, g, b) - Math.min(r, g, b)) > 10) {
-                    skinPixels++;
-                }
 
                 if (lastVisionLums) {
                     motionDiff += Math.abs(lum - lastVisionLums[i / 4]);
@@ -435,7 +428,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
 
                 const px = (i / 4) % 160;
                 const py = Math.floor((i / 4) / 160);
-                if (px > 24 && px < 136 && py > 18 && py < 102) {
+                if (px > 24 && px < 136 && py > 20 && py < 95) {
                     if (lum < darkestLum) {
                         darkestLum = lum;
                         darkestX = px;
@@ -451,13 +444,14 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                 lastVisionLums[i / 4] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
             }
 
-            const avgMotion = motionDiff / totalPixels;
+            const meanLum = sumLum / totalPixels;
+            const variance = (sumSqLum / totalPixels) - (meanLum * meanLum);
+            const stdDev = Math.sqrt(Math.max(0, variance));
             const contrast = maxLum - minLum;
-            const skinRatio = skinPixels / totalPixels;
-            const avgLum = sumLum / totalPixels;
+            const avgMotion = motionDiff / totalPixels;
 
-            const hasPerson = (contrast >= 38 && (skinRatio >= 0.03 || darkestLum <= 78) && avgLum >= 22 && avgLum <= 235);
-            const isSteady = hasPerson && (avgMotion < 4.8);
+            const hasPerson = (stdDev >= 12 && contrast >= 25 && meanLum >= 15 && meanLum <= 245);
+            const isSteady = hasPerson && (avgMotion < 6.8);
 
             const cw = video.offsetWidth || 640;
             const ch = video.offsetHeight || 480;
@@ -468,7 +462,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                 hasPerson,
                 isSteady,
                 avgMotion,
-                contrast,
+                stdDev,
                 eyePos: { x: eyeX, y: eyeY }
             };
         } catch (e) {
@@ -477,64 +471,47 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
     }
 
     function drawCyberReticle(ctx, dispX, dispY, dispW, dispH, label) {
-        const cornerLen = Math.max(10, Math.min(22, dispW * 0.28));
+        const cornerLen = Math.max(10, Math.min(20, dispW * 0.25));
         const cx = dispX + dispW / 2;
         const cy = dispY + dispH / 2;
 
-        ctx.shadowColor = 'rgba(16, 185, 129, 0.85)';
+        ctx.shadowColor = 'rgba(16, 185, 129, 0.9)';
         ctx.shadowBlur = 8;
         ctx.strokeStyle = '#10b981';
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = 2.2;
         ctx.lineCap = 'round';
 
         ctx.beginPath();
-        ctx.moveTo(dispX, dispY + cornerLen);
-        ctx.lineTo(dispX, dispY);
-        ctx.lineTo(dispX + cornerLen, dispY);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(dispX + dispW - cornerLen, dispY);
-        ctx.lineTo(dispX + dispW);
-        ctx.lineTo(dispX + dispW, dispY + cornerLen);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(dispX, dispY + dispH - cornerLen);
-        ctx.lineTo(dispX, dispY + dispH);
-        ctx.lineTo(dispX + cornerLen, dispY + dispH);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(dispX + dispW - cornerLen, dispY + dispH);
-        ctx.lineTo(dispX + dispW);
-        ctx.lineTo(dispX + dispW, dispY + dispH - cornerLen);
+        ctx.moveTo(dispX, dispY + cornerLen); ctx.lineTo(dispX, dispY); ctx.lineTo(dispX + cornerLen, dispY);
+        ctx.moveTo(dispX + dispW - cornerLen, dispY); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + cornerLen);
+        ctx.moveTo(dispX, dispY + dispH - cornerLen); ctx.lineTo(dispX, dispY + dispH); ctx.lineTo(dispX + cornerLen, dispY + dispH);
+        ctx.moveTo(dispX + dispW - cornerLen, dispY + dispH); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + dispH - cornerLen);
         ctx.stroke();
 
         ctx.shadowBlur = 0;
         ctx.strokeStyle = 'rgba(52, 211, 153, 0.9)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy);
-        ctx.moveTo(cx, cy - 6); ctx.lineTo(cx, cy + 6);
+        ctx.moveTo(cx - 5, cy); ctx.lineTo(cx + 5, cy);
+        ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5);
         ctx.stroke();
 
-        ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
-        const tagW = ctx.measureText(label).width + 16;
-        const tagH = 20;
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        const tagW = ctx.measureText(label).width + 14;
+        const tagH = 18;
         const tagX = Math.max(4, Math.min(ctx.canvas.width - tagW - 4, dispX + (dispW - tagW) / 2));
-        const tagY = dispY > 26 ? dispY - 24 : dispY + dispH + 6;
+        const tagY = dispY > 24 ? dispY - 22 : dispY + dispH + 6;
 
         ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
         ctx.beginPath();
-        ctx.roundRect(tagX, tagY, tagW, tagH, 5);
+        ctx.roundRect(tagX, tagY, tagW, tagH, 4);
         ctx.fill();
         ctx.strokeStyle = 'rgba(16, 185, 129, 0.6)';
         ctx.lineWidth = 1;
         ctx.stroke();
 
         ctx.fillStyle = '#34d399';
-        ctx.fillText(label, tagX + 8, tagY + 14);
+        ctx.fillText(label, tagX + 7, tagY + 13);
     }
 
     function startSmartEyeTracking() {
@@ -553,9 +530,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                     });
 
                     trackerTask = tracking.track('#kioskVideo', tracker);
-                } catch (te) {
-                    console.warn("Tracker note:", te);
-                }
+                } catch (te) {}
             }
 
             if (visionLoopTimer) clearInterval(visionLoopTimer);
@@ -582,7 +557,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
         let hasTrackerBox = false;
         let targetX = vision.eyePos ? vision.eyePos.x : cw / 2;
         let targetY = vision.eyePos ? vision.eyePos.y : ch / 2;
-        let targetRadius = 45;
+        let targetRadius = 42;
 
         if (latestTrackerEyes && (now - latestTrackerEyes.time < 400)) {
             const rawEyes = latestTrackerEyes.data.filter(r => r.width >= 24 && r.width < 180);
@@ -626,8 +601,8 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
             consecutivePresentFrames++;
 
             if (!hasTrackerBox && vision.eyePos) {
-                const boxW = Math.round(cw * 0.26);
-                const boxH = Math.round(ch * 0.28);
+                const boxW = Math.round(cw * 0.24);
+                const boxH = Math.round(ch * 0.26);
                 const dispX = Math.max(10, Math.min(cw - boxW - 10, vision.eyePos.x - boxW / 2));
                 const dispY = Math.max(10, Math.min(ch - boxH - 10, vision.eyePos.y - boxH / 2));
                 drawCyberReticle(overlayCtx, dispX, dispY, boxW, boxH, 'KHÓA NÉT MẮT');
@@ -653,7 +628,7 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
             const jitter = Math.hypot(targetX - lastTrackPos.x, targetY - lastTrackPos.y);
             lastTrackPos = { x: targetX, y: targetY };
 
-            if (jitter < 42 || vision.isSteady) {
+            if (jitter < 45 || vision.isSteady) {
                 stableLockFrames++;
                 const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
 
@@ -688,9 +663,9 @@ $labs = $pdo->query("SELECT * FROM laboratories ORDER BY lab_id ASC")->fetchAll(
                 kioskHUD.setLockProgress(0);
             }
 
-            if (consecutiveEmptyFrames >= 6) {
+            if (consecutiveEmptyFrames >= 5) {
                 if (kioskHUD && !isScanning) {
-                    kioskHUD.setTarget(0, 0, 45, false);
+                    kioskHUD.setTarget(0, 0, 42, false);
                     kioskHUD.setState('STANDBY');
                 }
 

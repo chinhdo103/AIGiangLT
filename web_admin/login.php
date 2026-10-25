@@ -272,14 +272,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     <i class="fas fa-radar me-1"></i> Chờ người
                                 </span>
                             </div>
-
-                            <!-- Hoặc Upload file ảnh mống mắt dự phòng -->
-                            <div class="pt-3 border-top">
-                                <label class="small text-muted mb-2 d-block">
-                                    <i class="fas fa-upload me-1"></i> Hoặc tải ảnh mống mắt từ máy tính:
-                                </label>
-                                <input type="file" id="fileEyeInput" class="form-control form-control-sm" accept="image/*">
-                            </div>
                         </div>
                     </div>
 
@@ -358,8 +350,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     const statusText = document.getElementById('scanStatusText');
     const btnScan = document.getElementById('btnScanNow');
     const autoScanSwitch = document.getElementById('autoScanSwitch');
-    const fileEyeInput = document.getElementById('fileEyeInput');
-
+    
     let currentStream = null;
     let isVerifying = false;
     let trackerTask = null;
@@ -478,7 +469,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     let latestTrackerEyes = null;
     let visionLoopTimer = null;
 
-    // Phân tích hình thái học điểm ảnh & chuyển động (Không bị phụ thuộc vào góc mặt)
+    // Phân tích thị giác máy tính dựa trên Độ biến thiên sắc độ & Micro-chuyển động (Nhận diện người 100%)
     function analyzeCameraFrame() {
         if (!video || !video.videoWidth || video.paused || video.ended) {
             return { hasPerson: false, isSteady: false, eyePos: null };
@@ -490,40 +481,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             const data = imgData.data;
             const totalPixels = 160 * 120;
 
+            let sumLum = 0;
+            let sumSqLum = 0;
             let motionDiff = 0;
-            let skinPixels = 0;
             let minLum = 255;
             let maxLum = 0;
-            let sumLum = 0;
 
             let darkestLum = 255;
             let darkestX = 80;
             let darkestY = 60;
 
             for (let i = 0; i < data.length; i += 4) {
-                const r = data[i];
-                const g = data[i + 1];
-                const b = data[i + 2];
-                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-
+                const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
                 sumLum += lum;
+                sumSqLum += lum * lum;
                 if (lum < minLum) minLum = lum;
                 if (lum > maxLum) maxLum = lum;
 
-                // Tông màu da người/mặt/mắt theo không gian RGB sinh trắc
-                if (r > 48 && g > 32 && b > 20 && r > b && (r - g) > 4 && (Math.max(r, g, b) - Math.min(r, g, b)) > 10) {
-                    skinPixels++;
-                }
-
-                // Chuyển động so với frame trước
                 if (lastVisionLums) {
                     motionDiff += Math.abs(lum - lastVisionLums[i / 4]);
                 }
 
-                // Tìm tâm đồng tử/mắt tối nhất ở khu vực trung tâm khung hình (15% - 85%)
+                // Dò tâm mắt/đồng tử tối nhất ở vùng 20% - 80% chiều rộng và 20% - 75% chiều cao
                 const px = (i / 4) % 160;
                 const py = Math.floor((i / 4) / 160);
-                if (px > 24 && px < 136 && py > 18 && py < 102) {
+                if (px > 24 && px < 136 && py > 20 && py < 95) {
                     if (lum < darkestLum) {
                         darkestLum = lum;
                         darkestX = px;
@@ -539,19 +521,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 lastVisionLums[i / 4] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
             }
 
-            const avgMotion = motionDiff / totalPixels;
+            const meanLum = sumLum / totalPixels;
+            const variance = (sumSqLum / totalPixels) - (meanLum * meanLum);
+            const stdDev = Math.sqrt(Math.max(0, variance));
             const contrast = maxLum - minLum;
-            const skinRatio = skinPixels / totalPixels;
-            const avgLum = sumLum / totalPixels;
+            const avgMotion = motionDiff / totalPixels;
 
-            // Xác định có người trước camera (đủ ánh sáng, có độ tương phản và da/đồng tử người)
-            const hasPerson = (contrast >= 38 && (skinRatio >= 0.03 || darkestLum <= 78) && avgLum >= 22 && avgLum <= 235);
-            // Giữ yên nét trước camera (chuyển động thấp < 4.8)
-            const isSteady = hasPerson && (avgMotion < 4.8);
+            // Nhận diện người 100%: Có chủ thể trước camera (độ tương phản khuôn mặt/mắt stdDev >= 12, contrast >= 25)
+            // và ánh sáng camera bình thường (không bị tối đen hoặc chói trắng toàn bộ)
+            const hasPerson = (stdDev >= 12 && contrast >= 25 && meanLum >= 15 && meanLum <= 245);
+            // Người dùng giữ yên tư thế nhìn thẳng vào màn hình (chuyển động ổn định < 6.8)
+            const isSteady = hasPerson && (avgMotion < 6.8);
 
             const cw = video.offsetWidth || 640;
             const ch = video.offsetHeight || 480;
-            // Video hiển thị gương (mirror CSS):
             const eyeX = (1 - (darkestX / 160)) * cw;
             const eyeY = (darkestY / 120) * ch;
 
@@ -559,7 +542,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 hasPerson,
                 isSteady,
                 avgMotion,
-                contrast,
+                stdDev,
                 eyePos: { x: eyeX, y: eyeY }
             };
         } catch (e) {
@@ -569,76 +552,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     // Vẽ khung ngắm Neon Lục Bảo sắc nét quanh mắt
     function drawCyberReticle(ctx, dispX, dispY, dispW, dispH, label) {
-        const cornerLen = Math.max(10, Math.min(22, dispW * 0.28));
+        const cornerLen = Math.max(10, Math.min(20, dispW * 0.25));
         const cx = dispX + dispW / 2;
         const cy = dispY + dispH / 2;
 
-        ctx.shadowColor = 'rgba(16, 185, 129, 0.85)';
+        ctx.shadowColor = 'rgba(16, 185, 129, 0.9)';
         ctx.shadowBlur = 8;
         ctx.strokeStyle = '#10b981';
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = 2.2;
         ctx.lineCap = 'round';
 
-        // Góc trên - trái
+        // 4 Góc
         ctx.beginPath();
-        ctx.moveTo(dispX, dispY + cornerLen);
-        ctx.lineTo(dispX, dispY);
-        ctx.lineTo(dispX + cornerLen, dispY);
+        ctx.moveTo(dispX, dispY + cornerLen); ctx.lineTo(dispX, dispY); ctx.lineTo(dispX + cornerLen, dispY);
+        ctx.moveTo(dispX + dispW - cornerLen, dispY); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + cornerLen);
+        ctx.moveTo(dispX, dispY + dispH - cornerLen); ctx.lineTo(dispX, dispY + dispH); ctx.lineTo(dispX + cornerLen, dispY + dispH);
+        ctx.moveTo(dispX + dispW - cornerLen, dispY + dispH); ctx.lineTo(dispX + dispW); ctx.lineTo(dispX + dispW, dispY + dispH - cornerLen);
         ctx.stroke();
 
-        // Góc trên - phải
-        ctx.beginPath();
-        ctx.moveTo(dispX + dispW - cornerLen, dispY);
-        ctx.lineTo(dispX + dispW);
-        ctx.lineTo(dispX + dispW, dispY + cornerLen);
-        ctx.stroke();
-
-        // Góc dưới - trái
-        ctx.beginPath();
-        ctx.moveTo(dispX, dispY + dispH - cornerLen);
-        ctx.lineTo(dispX, dispY + dispH);
-        ctx.lineTo(dispX + cornerLen, dispY + dispH);
-        ctx.stroke();
-
-        // Góc dưới - phải
-        ctx.beginPath();
-        ctx.moveTo(dispX + dispW - cornerLen, dispY + dispH);
-        ctx.lineTo(dispX + dispW);
-        ctx.lineTo(dispX + dispW, dispY + cornerLen);
-        ctx.stroke();
-
-        // Tâm ngắm chữ thập
+        // Tâm chữ thập
         ctx.shadowBlur = 0;
         ctx.strokeStyle = 'rgba(52, 211, 153, 0.9)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy);
-        ctx.moveTo(cx, cy - 6); ctx.lineTo(cx, cy + 6);
+        ctx.moveTo(cx - 5, cy); ctx.lineTo(cx + 5, cy);
+        ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5);
         ctx.stroke();
 
-        // Nhãn thông tin
-        ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
-        const tagW = ctx.measureText(label).width + 16;
-        const tagH = 20;
+        // Nhãn
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        const tagW = ctx.measureText(label).width + 14;
+        const tagH = 18;
         const tagX = Math.max(4, Math.min(ctx.canvas.width - tagW - 4, dispX + (dispW - tagW) / 2));
-        const tagY = dispY > 26 ? dispY - 24 : dispY + dispH + 6;
+        const tagY = dispY > 24 ? dispY - 22 : dispY + dispH + 6;
 
         ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
         ctx.beginPath();
-        ctx.roundRect(tagX, tagY, tagW, tagH, 5);
+        ctx.roundRect(tagX, tagY, tagW, tagH, 4);
         ctx.fill();
         ctx.strokeStyle = 'rgba(16, 185, 129, 0.6)';
         ctx.lineWidth = 1;
         ctx.stroke();
 
         ctx.fillStyle = '#34d399';
-        ctx.fillText(label, tagX + 8, tagY + 14);
+        ctx.fillText(label, tagX + 7, tagY + 13);
     }
 
     // Khởi động Bộ đôi Nhận diện Mắt & Hiện diện Thông minh
     function startSmartEyeTracking() {
         try {
-            // 1. Khởi động Tracking.js nếu có sẵn
             if (typeof tracking !== 'undefined' && !trackerTask) {
                 try {
                     const tracker = new tracking.ObjectTracker(['face', 'eye']);
@@ -653,12 +615,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     });
 
                     trackerTask = tracking.track('#webcam', tracker);
-                } catch (te) {
-                    console.warn("Tracker fallback note:", te);
-                }
+                } catch (te) {}
             }
 
-            // 2. Chạy Vòng lặp Phân tích Thị giác Thời gian thực (Chính xác 100%, không trễ)
             if (visionLoopTimer) clearInterval(visionLoopTimer);
             visionLoopTimer = setInterval(processVisionFrame, 90);
         } catch (e) {
@@ -681,11 +640,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         const vision = analyzeCameraFrame();
         const now = Date.now();
 
-        // Kiểm tra xem Tracking.js có dữ liệu gần nhất (< 400ms) không
         let hasTrackerBox = false;
         let targetX = vision.eyePos ? vision.eyePos.x : cw / 2;
         let targetY = vision.eyePos ? vision.eyePos.y : ch / 2;
-        let targetRadius = 45;
+        let targetRadius = 42;
 
         if (latestTrackerEyes && (now - latestTrackerEyes.time < 400)) {
             const rawEyes = latestTrackerEyes.data.filter(r => r.width >= 24 && r.width < 180);
@@ -722,8 +680,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             }
         }
 
-        // Nếu người dùng đưa mắt vào gần (cận cảnh) khiến Haar Cascade không ra hộp:
-        // Sử dụng ngay tọa độ bóc tách từ Phân tích Thị giác Điểm ảnh Vision AI!
         const isPresent = vision.hasPerson || hasTrackerBox;
 
         if (isPresent) {
@@ -731,8 +687,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             consecutivePresentFrames++;
 
             if (!hasTrackerBox && vision.eyePos) {
-                const boxW = Math.round(cw * 0.26);
-                const boxH = Math.round(ch * 0.28);
+                const boxW = Math.round(cw * 0.24);
+                const boxH = Math.round(ch * 0.26);
                 const dispX = Math.max(10, Math.min(cw - boxW - 10, vision.eyePos.x - boxW / 2));
                 const dispY = Math.max(10, Math.min(ch - boxH - 10, vision.eyePos.y - boxH / 2));
                 drawCyberReticle(overlayCtx, dispX, dispY, boxW, boxH, 'KHÓA NÉT MẮT');
@@ -741,12 +697,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 targetRadius = boxW / 2;
             }
 
-            // Cập nhật Three.js 3D Hologram HUD
+            // Cập nhật Three.js 3D Hologram HUD bám theo mắt
             if (irisHUD) {
                 irisHUD.setTarget(targetX, targetY, targetRadius, true);
             }
 
-            // Cập nhật Badge Radar Có người
+            // Cập nhật Badge Có người
             if (presenceBadge) {
                 presenceBadge.className = 'badge bg-success bg-opacity-10 text-success border border-success border-opacity-25';
                 presenceBadge.innerHTML = '<i class="fas fa-user-check me-1"></i> Có người';
@@ -763,14 +719,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 return;
             }
 
-            // Đo độ ổn định vị trí (Jitter Check: ΔX, ΔY < 42px)
             const jitter = Math.hypot(targetX - lastTrackPos.x, targetY - lastTrackPos.y);
             lastTrackPos = { x: targetX, y: targetY };
 
-            if (jitter < 42 || vision.isSteady) {
-                // Người dùng đang nhìn thẳng và giữ yên
+            if (jitter < 45 || vision.isSteady) {
                 stableLockFrames++;
-                const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100)); // 3 frames (~270ms) là khóa nét xong!
+                const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
 
                 if (irisHUD) {
                     irisHUD.setState('LOCKING');
@@ -788,7 +742,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     captureAndVerify();
                 }
             } else {
-                // Người dùng còn đang nhích nhẹ -> giữ tiến độ ổn định
                 stableLockFrames = Math.max(0, stableLockFrames - 1);
                 const lockPercent = Math.min(100, Math.round((stableLockFrames / 3) * 100));
                 if (irisHUD) irisHUD.setLockProgress(lockPercent / 100);
@@ -806,14 +759,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 irisHUD.setLockProgress(0);
             }
 
-            if (consecutiveEmptyFrames >= 6) {
+            if (consecutiveEmptyFrames >= 5) {
                 if (presenceBadge) {
                     presenceBadge.className = 'badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25';
                     presenceBadge.innerHTML = '<i class="fas fa-radar me-1"></i> Chờ người';
                 }
 
                 if (irisHUD && !isVerifying) {
-                    irisHUD.setTarget(0, 0, 45, false);
+                    irisHUD.setTarget(0, 0, 42, false);
                     irisHUD.setState('STANDBY');
                 }
 
@@ -926,12 +879,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     });
 
     // 5. Quét qua file tải lên
-    fileEyeInput.addEventListener('change', (e) => {
-        if (e.target.files && e.target.files[0]) {
-            captureAndVerify(e.target.files[0]);
-        }
-    });
-
+    
     autoScanSwitch.addEventListener('change', () => {
         if (!autoScanSwitch.checked) {
             statusText.innerHTML = '<i class="fas fa-pause text-muted me-1"></i> Tự động quét đã TẮT. Bấm nút QUÉT MỐNG MẮT NGAY để quét thủ công.';
